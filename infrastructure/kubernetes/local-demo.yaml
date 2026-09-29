@@ -1,0 +1,57 @@
+# Local demo deployment only. Distributed stateful operators/HA are not supplied.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: deucalint
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: local-data
+  namespace: deucalint
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deucalint-demo
+  namespace: deucalint
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {app: deucalint-demo}
+  template:
+    metadata:
+      labels: {app: deucalint-demo}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001}
+      containers:
+        - name: dashboard-api
+          image: deucalint:local
+          ports: [{containerPort: 8100}]
+          env:
+            - name: DEUCALINT_PASSWORD
+              valueFrom: {secretKeyRef: {name: deucalint-auth, key: owner-password}}
+            - name: DEUCALINT_VIEWER_PASSWORD
+              valueFrom: {secretKeyRef: {name: deucalint-auth, key: viewer-password}}
+          resources: {requests: {cpu: 250m, memory: 256Mi}, limits: {cpu: "1", memory: 1Gi}}
+          readinessProbe: {httpGet: {path: /health, port: 8100}, initialDelaySeconds: 10, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health, port: 8100}, initialDelaySeconds: 60, periodSeconds: 15}
+          volumeMounts: [{name: data, mountPath: /app/.data}]
+      volumes: [{name: data, persistentVolumeClaim: {claimName: local-data}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deucalint-demo
+  namespace: deucalint
+spec:
+  selector: {app: deucalint-demo}
+  ports: [{port: 8100, targetPort: 8100}]
+  type: ClusterIP

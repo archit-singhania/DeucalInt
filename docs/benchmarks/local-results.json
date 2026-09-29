@@ -1,0 +1,24 @@
+{
+  "dataset": {
+    "events": 18087,
+    "seed": 29,
+    "days": 35
+  },
+  "localPythonMetricsPlusFunnelMs": {
+    "runs": 25,
+    "p50": 78.51,
+    "p95": 85.78
+  },
+  "MADSyntheticEvaluation": {
+    "series": 200,
+    "seed": 73,
+    "truePositive": 100,
+    "falsePositive": 1,
+    "falseNegative": 0,
+    "trueNegative": 99,
+    "precision": 0.9900990099009901,
+    "recall": 1.0,
+    "f1": 0.9950248756218906
+  },
+  "limitations": "In-process synthetic evaluation on this machine. Not HTTP ingestion throughput, not a production ML benchmark. No seasonality."
+}

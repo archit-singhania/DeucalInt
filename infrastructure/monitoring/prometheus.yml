@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: local-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: [local:8100]
+  - job_name: java-platform
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: [collector:8080, processor:8080, analytics-api:8080]

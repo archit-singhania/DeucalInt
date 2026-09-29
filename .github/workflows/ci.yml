@@ -1,0 +1,29 @@
+name: DeucalInt verification
+on: [push, pull_request]
+permissions: {contents: read}
+jobs:
+  local-platform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '24', cache: npm}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - run: npm ci
+      - run: npm run check
+      - run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: browser-results, path: test-results}
+      - run: npm audit --audit-level=high
+      - run: docker build -t deucalint:test .
+  java:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: '21', cache: maven}
+      - run: mvn -B -f apps/platform/pom.xml verify

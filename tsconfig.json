@@ -1,0 +1,1 @@
+{"compilerOptions":{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","experimentalDecorators":true,"useDefineForClassFields":false,"strict":true,"skipLibCheck":true,"lib":["ES2022","DOM","DOM.Iterable"],"noEmit":true},"include":["apps/dashboard/src/**/*.ts","packages/**/*.ts"]}

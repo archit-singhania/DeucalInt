@@ -1,0 +1,104 @@
+name: deucalint
+services:
+  local:
+    build: .
+    ports: ["127.0.0.1:8100:8100"]
+    environment:
+      DEUCALINT_PASSWORD: ${DEUCALINT_PASSWORD:-deucalint-local}
+      DEUCALINT_VIEWER_PASSWORD: ${DEUCALINT_VIEWER_PASSWORD:-deucalint-viewer}
+    volumes: ["local-data:/app/.data"]
+    restart: unless-stopped
+  postgres:
+    image: postgres:17-alpine
+    profiles: [distributed]
+    environment: {POSTGRES_DB: deucalint, POSTGRES_USER: deucalint, POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-local-development}"}
+    volumes: ["postgres-data:/var/lib/postgresql/data", "./database/postgres:/docker-entrypoint-initdb.d:ro"]
+    healthcheck: {test: [CMD-SHELL, "pg_isready -U deucalint"], interval: 5s, timeout: 3s, retries: 20}
+  redpanda:
+    image: redpandadata/redpanda:v25.2.2
+    profiles: [distributed]
+    command: [redpanda, start, --smp, "1", --memory, 1G, --reserve-memory, 0M, --overprovisioned, --node-id, "0", --check=false, --kafka-addr, "internal://0.0.0.0:9092", --advertise-kafka-addr, "internal://redpanda:9092"]
+    volumes: ["redpanda-data:/var/lib/redpanda/data"]
+    healthcheck: {test: [CMD, rpk, cluster, health], interval: 10s, timeout: 5s, retries: 20}
+  topics:
+    image: redpandadata/redpanda:v25.2.2
+    profiles: [distributed]
+    depends_on: {redpanda: {condition: service_healthy}}
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["rpk topic create analytics.events.raw analytics.deadletter -p 3 -r 1 --brokers redpanda:9092"]
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    profiles: [distributed]
+    environment: {CLICKHOUSE_USER: deucalint, CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD:-local-development}", CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"}
+    volumes: ["clickhouse-data:/var/lib/clickhouse", "./database/clickhouse:/docker-entrypoint-initdb.d:ro"]
+    healthcheck: {test: [CMD-SHELL, "clickhouse-client --user deucalint --password $$CLICKHOUSE_PASSWORD --query 'SELECT 1'"], interval: 5s, timeout: 3s, retries: 30}
+  collector:
+    build: apps/platform
+    profiles: [distributed]
+    ports: ["127.0.0.1:8080:8080"]
+    environment: &platform-env
+      SERVICE_ROLE: collector
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      POSTGRES_URL: jdbc:postgresql://postgres:5432/deucalint
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-local-development}
+    depends_on: {postgres: {condition: service_healthy}, topics: {condition: service_completed_successfully}}
+    restart: unless-stopped
+  processor:
+    build: apps/platform
+    profiles: [distributed]
+    environment: {<<: *platform-env, SERVICE_ROLE: worker}
+    depends_on: {clickhouse: {condition: service_healthy}, postgres: {condition: service_healthy}, topics: {condition: service_completed_successfully}}
+    restart: unless-stopped
+  analytics-api:
+    build: apps/platform
+    profiles: [distributed]
+    ports: ["127.0.0.1:8081:8080"]
+    environment: {<<: *platform-env, SERVICE_ROLE: api}
+    depends_on: {clickhouse: {condition: service_healthy}, postgres: {condition: service_healthy}}
+    restart: unless-stopped
+  distributed-dashboard:
+    build: .
+    profiles: [distributed]
+    ports: ["127.0.0.1:8200:8100"]
+    environment:
+      DEUCALINT_PROFILE: distributed
+      DEUCALINT_QUERY_TOKENS: '{"demo":"sk_local_deucalint"}'
+      DEUCALINT_ORIGINS: http://127.0.0.1:8200,http://localhost:8200
+      DEUCALINT_PASSWORD: ${DEUCALINT_PASSWORD:-deucalint-local}
+      DEUCALINT_VIEWER_PASSWORD: ${DEUCALINT_VIEWER_PASSWORD:-deucalint-viewer}
+    volumes: ["distributed-ui-data:/app/.data"]
+    depends_on: [collector, analytics-api]
+    restart: unless-stopped
+  ai-engine:
+    build: apps/ai-engine
+    profiles: [distributed]
+    environment: {AI_SERVICE_TOKEN: "${AI_SERVICE_TOKEN:-local-ai-development}"}
+  valkey:
+    image: valkey/valkey:8-alpine
+    profiles: [extensions]
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    profiles: [extensions]
+    command: server /data --console-address :9001
+    environment: {MINIO_ROOT_USER: deucalint, MINIO_ROOT_PASSWORD: "${MINIO_PASSWORD:-local-development-only}"}
+    volumes: ["replay-data:/data"]
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    profiles: [monitoring]
+    volumes: ["./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["127.0.0.1:9090:9090"]
+  grafana:
+    image: grafana/grafana:12.1.1
+    profiles: [monitoring]
+    ports: ["127.0.0.1:3000:3000"]
+    environment: {GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_PASSWORD:-local-development-only}"}
+    volumes: ["./infrastructure/monitoring/grafana:/etc/grafana/provisioning:ro"]
+volumes:
+  local-data:
+  distributed-ui-data:
+  postgres-data:
+  redpanda-data:
+  clickhouse-data:
+  replay-data:
