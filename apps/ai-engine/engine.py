@@ -4,6 +4,36 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from statistics import median, mean
 import math
+import re
+
+
+def plan_tool(question):
+    """Small, explicit intent vocabulary shared by both deterministic entrypoints.
+
+    This selects an allowed tool only; it never executes or constructs a query
+    from natural language. Unknown and ambiguous questions fall back to metrics.
+    """
+    if not isinstance(question, str) or not 1 <= len(question.strip()) <= 500:
+        raise ValueError("Question must contain 1–500 characters")
+    text = question.lower()
+    vocabularies = (
+        (
+            "query_errors",
+            r"\b(?:errors?|exceptions?|crash(?:es|ed|ing)?|javascript failures?)\b",
+        ),
+        (
+            "query_performance",
+            r"\b(?:latency|slow(?:er|est|ness|down|downs)?|performance|web vitals?|lcp|inp|ttfb|cls)\b",
+        ),
+        (
+            "query_deployments",
+            r"\b(?:deploy(?:ment|ments|ed|ing)?|releases?|rollouts?)\b",
+        ),
+    )
+    for tool, pattern in vocabularies:
+        if re.search(pattern, text):
+            return tool
+    return "compare_metrics"
 
 
 def stamp(value):
@@ -188,10 +218,18 @@ def funnel(events, steps=None, window=1800, ordered=True):
     }
 
 
-def retention(events, now):
+def retention(events, now, mode="exact"):
+    """Observed-first-activity cohorts, with maturity-aware cell denominators.
+
+    Rolling means active on or after the requested day within the observed
+    window. This is not full-history acquisition retention; callers must label
+    the available history and unequal follow-up for recent cohorts.
+    """
+    if mode not in ("exact", "rolling"):
+        raise ValueError("Retention mode must be exact or rolling")
     users = defaultdict(set)
     for e in events:
-        if e["type"] == "deployment":
+        if e["type"] == "deployment" or stamp(e["timestamp"]) > now:
             continue
         users[e["anonymousId"]].add(int(stamp(e["timestamp"]) // 86400))
     cohorts = defaultdict(list)
@@ -206,13 +244,21 @@ def retention(events, now):
             eligible = [
                 (first, dates) for first, dates in people if first + day <= today
             ]
-            cells.append(
-                pct(
-                    sum(first + day in dates for first, dates in eligible),
-                    len(eligible),
+            retained = sum(
+                (
+                    first + day in dates
+                    if mode == "exact"
+                    else any(date >= first + day for date in dates)
                 )
-                if eligible
-                else None
+                for first, dates in eligible
+            )
+            cells.append(
+                {
+                    "day": day,
+                    "eligible": len(eligible),
+                    "retained": retained,
+                    "rate": pct(retained, len(eligible)) if eligible else None,
+                }
             )
         result.append(
             {
@@ -220,7 +266,12 @@ def retention(events, now):
                     "%b %d"
                 ),
                 "users": len(people),
-                "values": cells,
+                "cohortId": datetime.fromtimestamp(
+                    cohort * 86400, timezone.utc
+                ).strftime("%Y-%m-%d"),
+                "values": [cell["rate"] for cell in cells],
+                "cells": cells,
+                "mode": mode,
             }
         )
     return result
@@ -238,6 +289,77 @@ def journeys(events):
             if a != b:
                 edges[(a, b)] += 1
     return [{"from": a, "to": b, "count": n} for (a, b), n in edges.most_common(14)]
+
+
+def journey_graph(events, anchor=None, direction="forward", max_steps=5, limit=30):
+    """A staged, session-weighted graph; repeated labels at different steps stay distinct."""
+    if direction not in ("forward", "backward"):
+        raise ValueError("Journey direction must be forward or backward")
+    if not isinstance(max_steps, int) or not 2 <= max_steps <= 8:
+        raise ValueError("Choose 2–8 journey steps")
+    if not isinstance(limit, int) or not max_steps <= limit <= 80:
+        raise ValueError("Journey node limit must be between step count and 80")
+    if anchor is not None and (not isinstance(anchor, str) or len(anchor) > 200):
+        raise ValueError("Invalid journey anchor")
+    nodes, exits, edges = Counter(), Counter(), Counter()
+    count, truncated = 0, False
+    for es in sessions(events).values():
+        path = []
+        for e in es:
+            if e["type"] not in ("page", "product", "error"):
+                continue
+            label = (
+                e.get("page", {}).get("path", "/") if e["type"] == "page" else e["name"]
+            )
+            if not path or path[-1] != label:
+                path.append(label)
+        if direction == "backward":
+            path.reverse()
+        if anchor:
+            if anchor not in path:
+                continue
+            path = path[path.index(anchor) :]
+        if not path:
+            continue
+        count += 1
+        truncated |= len(path) > max_steps
+        visible = path[:max_steps]
+        for step, label in enumerate(visible):
+            nodes[(step, label)] += 1
+            if step == len(path) - 1:
+                exits[(step, label)] += 1
+            if step:
+                edges[((step - 1, visible[step - 1]), (step, label))] += 1
+    # A per-step quota preserves readable columns and never emits dangling links.
+    selected = set()
+    quota, extra = divmod(limit, max_steps)
+    for step in range(max_steps):
+        choices = [(key, value) for key, value in nodes.items() if key[0] == step]
+        choices.sort(key=lambda pair: (-pair[1], pair[0][1]))
+        selected.update(key for key, _ in choices[: quota + (step < extra)])
+    truncated |= len(selected) < len(nodes)
+    identifier = lambda key: f"{key[0]}:{key[1]}"
+    return {
+        "nodes": [
+            {
+                "id": identifier(key),
+                "label": key[1],
+                "step": key[0],
+                "sessions": nodes[key],
+                "exits": exits[key],
+            }
+            for key in sorted(selected)
+        ],
+        "links": [
+            {"source": identifier(a), "target": identifier(b), "value": value}
+            for (a, b), value in sorted(edges.items())
+            if a in selected and b in selected
+        ],
+        "sessions": count,
+        "truncated": truncated,
+        "direction": direction,
+        "anchor": anchor,
+    }
 
 
 def anomalies(series):

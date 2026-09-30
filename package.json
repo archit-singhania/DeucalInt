@@ -5,12 +5,13 @@
   "description": "DeucalInt — Real-Time Behavioral Intelligence & Product Observability Platform",
   "scripts": {
     "dev": "ng serve",
-    "build": "ng build",
+    "build": "ng build && npm run sdk:build",
     "preview": "python apps/local-api/server.py",
     "test": "node --test tests/sdk.test.mjs",
     "test:e2e": "playwright test",
-    "sdk:build": "esbuild packages/web-sdk/src/index.ts --bundle --format=esm --outfile=dist/sdk.js --minify",
-    "check": "npm run build && npm run sdk:build && npm test",
+    "test:sdk:browser": "node --test tests/sdk-browser.mjs",
+    "sdk:build": "esbuild packages/web-sdk/src/index.ts --bundle --format=esm --outfile=dist/sdk.js --minify && esbuild packages/web-sdk/src/loader.ts --bundle --format=iife --outfile=dist/dashboard/ingest.js --minify",
+    "check": "npm run build && npm test",
     "format": "prettier --write \"apps/**/*.{ts,html,css,java}\" \"packages/**/*.{ts,mjs,java,json}\" \"tests/**/*.{ts,mjs}\" \"*.{json,ts,yml}\"",
     "format:check": "prettier --check \"apps/**/*.{ts,html,css,java}\" \"packages/**/*.{ts,mjs,java,json}\" \"tests/**/*.{ts,mjs}\" \"*.{json,ts,yml}\""
   },

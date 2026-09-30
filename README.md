@@ -103,3 +103,8 @@ tests               Unit, HTTP contract, browser, integration and chaos checks
 benchmarks          k6, synthetic traffic, algorithm evaluation
 docs                Phase status, manual tests, ADRs, verification and demo media
 ```
+
+
+## Studio makeover
+
+Use Connect a source for a single consent-aware installation snippet, then verify real events and explore the auto-discovered library. The workspace now includes geographic filtering, staged journey exploration, rolling retention, persistent sessions and signed-webhook delivery tracking. See [current delivery report](docs/DELIVERY_STATUS.md), [manual testing](docs/MANUAL_TESTING.md), and [browser SDK installation](packages/web-sdk/README.md). Hosting and identity-provider selection are deferred; this is not a claim of complete production readiness.

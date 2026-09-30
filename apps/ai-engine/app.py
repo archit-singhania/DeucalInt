@@ -4,7 +4,7 @@ import json, os, secrets, urllib.request
 from typing import Any, Literal
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
-from engine import investigate, validate_ast, anomalies
+from engine import investigate, validate_ast, anomalies, plan_tool
 
 app = FastAPI(title="DeucalInt Intelligence API", version="0.1.0")
 
@@ -53,17 +53,13 @@ def plan(data: Question, authorization: str | None = Header(default=None)):
     authorize(authorization)
     endpoint = os.environ.get("OLLAMA_URL")
     if not endpoint:
-        text = data.question.lower()
-        tool = (
-            "query_errors"
-            if "error" in text
-            else (
-                "query_performance"
-                if "latency" in text
-                else "query_deployments" if "deployment" in text else "compare_metrics"
-            )
-        )
-        return {"mode": "deterministic", **Plan(tool=tool).model_dump()}
+        try:
+            return {
+                "mode": "deterministic",
+                **Plan(tool=plan_tool(data.question)).model_dump(),
+            }
+        except ValueError as invalid:
+            raise HTTPException(400, str(invalid))
     # The model can select only a named tool and a validated segment, never SQL.
     payload = {
         "model": os.environ.get("OLLAMA_MODEL", "qwen2.5:7b"),

@@ -1,51 +1,22 @@
-# Verification report
+# Verification report — current makeover
 
-Last verified locally: **2026-09-30**, Windows, Node 24, Python 3.14, Java 21 and Maven 3.9.11.
+Verified 2026-09-30 on Windows, Node24, Python3.14, Java21.
 
-| Check | Observed result |
+| Check | Result |
 |---|---|
-| Angular AOT production compilation + strict templates | Passed |
-| Python analytics, HTTP pipeline, privacy, authorization, lifecycle and FastAPI tests | **37 passed** |
-| Browser/Node SDK privacy, delivery retry and bundle-budget tests | **3 passed** |
-| Java collector contracts and SDK retry delivery | **4 passed** |
-| Testcontainers Kafka integration | **1 skipped: no Docker runtime** |
-| Playwright Chromium | **5 passed**: overview/evidence; analytics routes; SDK-to-live delivery; mobile overflow/layout; command palette/theme/segments/comparison |
-| Java Maven reactor packaging | Passed for platform and Java SDK |
-| Prettier and Black | Passed |
-| Deployment/API YAML syntax | Parsed successfully; syntax validation is not deployment validation |
-| npm dependency audit | Zero reported vulnerabilities after compatible formatter dependency updates |
-| Desktop and mobile visual inspection | Reviewed screenshots; mobile banner layout adjusted |
-| Walkthrough recording | Saved to `docs/media/walkthrough.webm` |
+| Angular AOT + strict templates + SDK build | Passed; 365.96KB initial assets, 96.33KB estimated transfer |
+| Python/API/static asset regression | 64 passed |
+| SDK unit tests | 7 passed; ESM5754B gzip, loader6040B gzip |
+| Chromium UI | 12 scenarios verified |
+| WebKit makeover UI | 7 scenarios verified |
+| Independent cross-origin SDK capture | Chromium and WebKit passed |
+| Firefox | Installed runtime fails launch with Windows spawn UNKNOWN; behavior unverified |
+| Java | 9 passed; 2 Docker integration tests skipped |
+| Deterministic intent/safe-output/evidence fixtures | 12/12,12/12,6/6 |
+| Synthetic anomaly fixture | Precision95.24%, recall100%;60TP,3FP,0FN |
 
-## Measured scope
+Tests caught and fixed: CSP blocking Angular's inline stylesheet onload; preencoded JSON map bytes being encoded again; and a hidden skip-link regression. Browser checks now require real computed styling and >100 loaded map paths, in addition to functional navigation. The skip link and dialog focus cycle are tested. Map and flow data have keyboard/table alternatives.
 
-The current browser SDK is **5,153 bytes gzip**, under its 12 KiB budget. Angular AOT now produces **309.03 KB total initial assets**, approximately **85.02 KB estimated transfer**. This replaces the previous JIT build. Route splitting remains optional future work. Python and browser coverage now includes membership isolation/revocation and new UI controls. Java results below are from the preceding verification; Java sources were not changed by this upgrade.
+The final build passed all five original Chromium scenarios and all seven makeover scenarios. All seven makeover scenarios also passed in WebKit. Separate output directories kept screenshots and traces isolated between runs.
 
-`docs/benchmarks/local-results.json` contains actual in-process analytics timing and a reproducible 200-series synthetic MAD-detector evaluation. Its precision/recall results reflect deliberately simple labeled synthetic signals. They are not evidence of real-world forecasting quality or distributed system throughput.
-
-## Not executed or not claimed
-
-- Docker Compose services, ClickHouse migrations/materialized views, broker-to-warehouse delivery, outage recovery, k6 network load, monitoring containers and Kubernetes deployment.
-- A live Ollama model. The deterministic planner and service authorization were tested with FastAPI TestClient; model-generated planning is unverified.
-- GitHub-hosted CI, registry publishing, public hosting, production traffic, multi-region behavior or production security certification.
-
-The full roadmap remains partially implemented. See `PHASES.md` for every remaining item. Skipped or unavailable checks are not counted as passes.
-
-## Reproduce
-
-```sh
-npm ci
-npm run check
-python -m venv .venv
-# Activate .venv, or call its Python executable directly.
-python -m pip install -r requirements-dev.txt
-python -m unittest discover -s tests -p 'test_*.py' -v
-npx playwright install chromium
-npm run test:e2e
-mvn verify
-npm run format:check
-python -m black --check apps tests benchmarks
-python benchmarks/evaluate.py
-```
-
-The plain system-Python test run intentionally skips FastAPI tests unless their optional dependencies are installed. The recorded count of 34 used the project virtual environment and ran those tests.
+Screenshots are in docs/media. The older walkthrough video predates this makeover. No claim is made for Docker SQL execution, distributed load, external webhook deliverability, live-model quality, hosted CI, deployment, formal accessibility conformance, or production readiness. See DELIVERY_STATUS.md for remaining work.

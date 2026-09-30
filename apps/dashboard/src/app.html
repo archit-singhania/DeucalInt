@@ -63,14 +63,18 @@
     </section>
   </main>
 } @else {
+  <a class="skip-link" href="#main-content" (click)="$event.preventDefault(); skipToContent()"
+    >Skip to content</a
+  >
   <aside class="sidebar">
     <a class="brand" href="#overview"
       ><span class="logo-mark">D</span>DeucalInt<span class="beta">BETA</span></a
     >
     <div class="workspace">
-      <span class="workspace-icon">N</span>
+      <span class="workspace-icon">{{ projectName.slice(0, 1) }}</span>
       <div>
-        <b>Personal workspace</b><small>Developer plan <span>↗</span></small>
+        <b>{{ projectName }}</b
+        ><small><i class="tiny-dot"></i> {{ profile }} workspace</small>
       </div>
     </div>
     <nav aria-label="Main navigation">
@@ -84,7 +88,10 @@
               [attr.aria-current]="view === item[0] ? 'page' : null"
               (click)="navigate(item[0])"
               ><span class="nav-icon"
-                ><di-icon [name]="item[0] === 'team' ? 'users' : item[0]" /></span
+                ><di-icon
+                  [name]="
+                    item[0] === 'team' ? 'users' : item[0] === 'events' ? 'live' : item[0]
+                  " /></span
               >{{ item[1] }}
               @if (item[0] === 'live') {
                 <i class="tiny-dot"></i>
@@ -132,11 +139,15 @@
         ><span class="avatar small">DI</span>
       </div>
     </header>
-    <main class="content" id="main-content">
-      <a class="skip-link" href="#main-content">Skip to content</a>
+    <main
+      class="content"
+      id="main-content"
+      tabindex="-1"
+      [class.manage-view]="['onboarding', 'settings', 'team'].includes(view)"
+    >
       <div class="page-heading">
         <div>
-          <div class="eyebrow">YOUR PRODUCT, UNDERSTOOD</div>
+          <div class="eyebrow">PRODUCT INTELLIGENCE</div>
           <h1>
             {{ title }}
             @if (view === 'live') {
@@ -146,7 +157,9 @@
           <p>{{ subtitle }}</p>
         </div>
         <div class="heading-actions">
-          <button (click)="export()">↥ <span>Export data</span></button
+          <button class="connect-action" (click)="navigate('onboarding')">
+            <di-icon name="settings" /><span>Connect your site</span></button
+          ><button (click)="export()"><di-icon name="download" /> <span>Export</span></button
           ><button class="primary" (click)="investigateNow()">✧ Ask DeucalInt</button>
         </div>
       </div>
@@ -245,33 +258,298 @@
       }
       @if (!loading && data) {
         @if (view === 'onboarding') {
-          <section class="panel onboarding-panel">
-            <span class="eyebrow">CONNECT YOUR PRODUCT</span>
-            <h2>Your first signal starts here.</h2>
-            <p>
-              Create a project, copy its public ingestion token, and initialize the browser SDK with
-              consent enabled.
-            </p>
-            @if (canManage) {
-              <label
-                >Project name<input
-                  [value]="newProjectName"
-                  (input)="newProjectName = value($event)"
-                  placeholder="My product" /></label
-              ><button class="primary" (click)="createProject()">Create project</button>
+          <div class="setup-layout">
+            <aside class="setup-rail">
+              <span class="eyebrow">FROM ZERO TO INSIGHT</span>
+              <h2>One connection.<br />The whole picture.</h2>
+              <p>
+                Start with one small snippet. DeucalInt discovers the everyday events that matter,
+                automatically.
+              </p>
+              @for (
+                step of [
+                  { n: 1, title: 'Your website', text: 'Tell us where your product lives' },
+                  { n: 2, title: 'A single snippet', text: 'Install once, capture automatically' },
+                  { n: 3, title: 'See your first signals', text: 'Verify your connection' },
+                ];
+                track step.n
+              ) {
+                <button
+                  class="setup-step"
+                  [class.current]="setupStep === step.n"
+                  [attr.aria-current]="setupStep === step.n ? 'step' : null"
+                  (click)="setupStep = step.n"
+                >
+                  <span>{{ step.n }}</span>
+                  <div>
+                    <b>{{ step.title }}</b
+                    ><small>{{ step.text }}</small>
+                  </div>
+                  <di-icon name="arrow" />
+                </button>
+              }
+              <div class="setup-assurance">
+                <di-icon name="check" />
+                <p>Consent first. No form values or page text captured by default.</p>
+              </div>
+            </aside>
+            <section class="panel setup-main">
+              @if (setupStep === 1) {
+                <span class="step-label">STEP 01 / 03</span>
+                <h2>Let's connect your product.</h2>
+                <p>Use the selected project, or create a separate space for a new site.</p>
+                <div class="selected-project">
+                  <span class="workspace-icon">{{ projectName.slice(0, 1) }}</span>
+                  <div>
+                    <b>{{ projectName }}</b
+                    ><small>Selected project</small>
+                  </div>
+                  <span class="tag">{{ role }}</span>
+                </div>
+                <label
+                  >Website URL<input
+                    type="url"
+                    [value]="websiteUrl"
+                    (input)="websiteUrl = value($event)"
+                    placeholder="https://your-product.com"
+                /></label>
+                <p class="field-help">
+                  This registers the allowed website origin for this project's events.
+                </p>
+                <button
+                  class="primary"
+                  [disabled]="!canManage || !websiteUrl"
+                  (click)="saveWebsite()"
+                >
+                  Continue to installation <di-icon name="arrow" />
+                </button>
+                @if (canManage) {
+                  <details class="new-project">
+                    <summary>Connecting a different product?</summary>
+                    <label
+                      >Project name<input
+                        [value]="newProjectName"
+                        (input)="newProjectName = value($event)"
+                        placeholder="My new product" /></label
+                    ><button
+                      (click)="createProject()"
+                      [disabled]="newProjectName.trim().length < 2"
+                    >
+                      Create project
+                    </button>
+                  </details>
+                }
+              }
+              @if (setupStep === 2) {
+                <span class="step-label">STEP 02 / 03</span>
+                <h2>Add once. Understand more.</h2>
+                <p>
+                  Paste this snippet into your site. Page views, clicks, navigation, errors and Web
+                  Vitals are collected after consent.
+                </p>
+                <div class="install-tabs" role="group" aria-label="Installation method">
+                  @for (method of ['HTML', 'Tag manager', 'WordPress']; track method) {
+                    <button
+                      [class.active]="installMethod === method"
+                      [attr.aria-pressed]="installMethod === method"
+                      (click)="installMethod = method"
+                    >
+                      {{ method }}
+                    </button>
+                  }
+                </div>
+                <p class="install-hint">
+                  {{
+                    installMethod === 'HTML'
+                      ? 'Place the snippet in the head of your website.'
+                      : installMethod === 'Tag manager'
+                        ? 'Create a Custom HTML tag and use your consent-approved page trigger.'
+                        : 'Add the snippet through your existing header-code tool or site theme.'
+                  }}
+                </p>
+                <label
+                  >Public ingestion token<input
+                    [value]="setupToken"
+                    (input)="installToken = value($event)"
+                    placeholder="Paste the token shown when your project was created"
+                /></label>
+                <label class="consent-check"
+                  ><input
+                    type="checkbox"
+                    [checked]="hasConsent"
+                    (change)="hasConsent = !hasConsent"
+                  />
+                  My site has already received analytics consent.</label
+                >
+                <div class="code-window">
+                  <div>
+                    <span><i></i><i></i><i></i></span><small>Website installation</small
+                    ><button [disabled]="!setupToken" (click)="copySnippet()">Copy snippet</button>
+                  </div>
+                  <pre>{{ installSnippet }}</pre>
+                </div>
+                @if (!hasConsent) {
+                  <p class="consent-instruction">
+                    Capture stays off until your consent banner calls
+                    <code>window.deucalint.consent(true)</code>. Call it with <code>false</code> to
+                    withdraw consent.
+                  </p>
+                }
+                <p class="field-help">
+                  For a public site, the collector must be publicly reachable over HTTPS. A
+                  localhost collector works only on this computer.
+                </p>
+                <button class="primary" (click)="setupStep = 3; checkConnection()">
+                  I've added the snippet <di-icon name="arrow" />
+                </button>
+              }
+              @if (setupStep === 3) {
+                <span class="step-label">STEP 03 / 03</span>
+                <div class="connection-orbit" [class.verified]="setupStatus?.connected">
+                  <di-icon [name]="setupStatus?.connected ? 'check' : 'live'" />
+                </div>
+                <h2>
+                  {{
+                    setupStatus?.connected
+                      ? 'Your signals are coming through.'
+                      : 'Ready when your site is.'
+                  }}
+                </h2>
+                <p>
+                  {{
+                    setupStatus?.connected
+                      ? 'DeucalInt is receiving events for this project. Your workspace is ready to explore.'
+                      : 'Visit your site in another tab, accept analytics consent, and interact with a page. Then check the connection.'
+                  }}
+                </p>
+                <div class="connection-summary">
+                  <span
+                    >Status
+                    <b>{{
+                      setupStatus?.connected ? 'Receiving events' : 'Waiting for first event'
+                    }}</b></span
+                  ><span
+                    >Events received <b>{{ setupStatus?.realEventCount || 0 | number }}</b></span
+                  ><span
+                    >Last signal
+                    <b>{{
+                      setupStatus?.lastRealEventAt
+                        ? (setupStatus.lastRealEventAt | date: 'mediumTime')
+                        : 'Not yet'
+                    }}</b></span
+                  >
+                </div>
+                <button [disabled]="setupBusy" (click)="checkConnection()">
+                  <di-icon name="refresh" />{{
+                    setupBusy ? 'Checking…' : 'Check connection'
+                  }}</button
+                ><button
+                  class="primary"
+                  (click)="navigate(setupStatus?.connected ? 'events' : 'demo')"
+                >
+                  {{ setupStatus?.connected ? 'Explore captured events' : 'Try the demo first'
+                  }}<di-icon name="arrow" />
+                </button>
+              }
+            </section>
+          </div>
+          <div class="autocapture-benefits">
+            @for (
+              item of [
+                {
+                  icon: 'overview',
+                  title: 'Page views & navigation',
+                  text: 'Understand where people go.',
+                },
+                {
+                  icon: 'live',
+                  title: 'Clicks & interactions',
+                  text: 'Discover engagement automatically.',
+                },
+                {
+                  icon: 'observability',
+                  title: 'Errors & performance',
+                  text: 'See friction alongside behavior.',
+                },
+              ];
+              track item.title
+            ) {
+              <article>
+                <di-icon [name]="item.icon" />
+                <div>
+                  <h3>{{ item.title }}</h3>
+                  <p>{{ item.text }}</p>
+                </div>
+              </article>
             }
-            @if (rotatedToken) {
-              <pre>{{ rotatedToken }}</pre>
-              <p>Copy this token now. It is only shown once.</p>
-            }
-            <ol>
-              <li>Build the SDK with npm run sdk:build.</li>
-              <li>Serve dist/sdk.js from your application.</li>
-              <li>Initialize with your collector URL and public project token after consent.</li>
-              <li>Open Live activity to verify the first event.</li>
-            </ol>
-            <button (click)="navigate('demo')">Test with the demo store</button
-            ><button (click)="navigate('live')">View incoming events</button>
+          </div>
+        }
+        @if (view === 'events') {
+          <section class="panel event-catalog">
+            <div class="panel-header">
+              <div>
+                <span class="eyebrow">DISCOVERED, NOT DEFINED</span>
+                <h3>Your event library</h3>
+                <p>Events received in the selected project and time window.</p>
+              </div>
+              <input
+                aria-label="Search captured events"
+                placeholder="Find an event…"
+                [value]="eventSearch"
+                (input)="eventSearch = value($event)"
+              />
+            </div>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Event</th>
+                    <th>Type</th>
+                    <th>Received</th>
+                    <th>Sessions</th>
+                    <th>Last seen</th>
+                    <th>Explore</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (event of eventRows; track event.type + event.name) {
+                    <tr>
+                      <td>
+                        <b>{{ event.name }}</b>
+                      </td>
+                      <td>
+                        <span class="tag">{{ event.type }}</span>
+                      </td>
+                      <td>{{ event.count | number }}</td>
+                      <td>{{ event.sessions | number }}</td>
+                      <td>{{ event.lastSeenAt | date: 'short' }}</td>
+                      <td>
+                        <button (click)="eventFunnel(event.name)">
+                          Build funnel <di-icon name="arrow" />
+                        </button>
+                      </td>
+                    </tr>
+                  } @empty {
+                    <tr>
+                      <td colspan="6">
+                        <div class="empty-state">
+                          <di-icon name="live" />
+                          <h3>Your first events will appear here.</h3>
+                          <p>Connect your website and interact with it after granting consent.</p>
+                          <button class="primary" (click)="navigate('onboarding')">
+                            Connect your site
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+            <div class="panel-footer">
+              Built-in events are automatic. Business outcomes such as a completed purchase can use
+              a custom event.
+            </div>
           </section>
         }
         @if (view === 'team') {
@@ -356,9 +634,9 @@
             <span class="insight-icon">✧</span>
             <div>
               <div class="insight-label">
-                A LITTLE SIGNAL. A LOT OF CONTEXT.<span class="purple-tag">Evidence engine</span>
+                YOUR NEXT QUESTION, ANSWERED.<span class="purple-tag">Evidence engine</span>
               </div>
-              <h3>There’s a story behind your conversion rate.</h3>
+              <h3>{{ overviewHeadline }}</h3>
               <p>
                 Connect behavior, errors, and releases to understand what changed in the last
                 {{ days }} days.
@@ -438,8 +716,8 @@
                 >
                   <defs>
                     <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="#8470ef" stop-opacity="0.18" />
-                      <stop offset="100%" stop-color="#8470ef" stop-opacity="0" />
+                      <stop offset="0%" stop-color="#167d78" stop-opacity="0.18" />
+                      <stop offset="100%" stop-color="#167d78" stop-opacity="0" />
                     </linearGradient>
                   </defs>
                   @for (y of [20, 65, 110, 155, 200]; track y) {
@@ -461,18 +739,28 @@
                       stroke-dasharray="6 5"
                     />
                   }
+                  @if (hoverBucket) {
+                    <line
+                      [attr.x1]="(hoverIndex * 780) / (data.series.length - 1 || 1)"
+                      [attr.x2]="(hoverIndex * 780) / (data.series.length - 1 || 1)"
+                      y1="10"
+                      y2="210"
+                      stroke="var(--text-tertiary)"
+                      stroke-dasharray="3 5"
+                    />
+                  }
                   <path [attr.d]="area()" fill="url(#chart-fill)" />
                   <path
                     [attr.d]="line('pageviews', true)"
                     fill="none"
-                    stroke="#51b6a4"
+                    stroke="#a2b4e7"
                     stroke-width="2.5"
                     stroke-dasharray="5 4"
                   />
                   <path
                     [attr.d]="line('sessions', true)"
                     fill="none"
-                    stroke="#7c66e9"
+                    stroke="#147d78"
                     stroke-width="3"
                     stroke-linejoin="round"
                   />
@@ -491,9 +779,40 @@
               </div>
               <div class="chart-bottom">
                 <span><i class="tiny-dot"></i>Sessions and page views · shared scale</span
+                ><button class="chart-data-button" (click)="chartTable = !chartTable">
+                  {{ chartTable ? 'Hide data' : 'View data' }}</button
                 ><span>UTC · {{ days }}-day view</span>
               </div>
             </section>
+            @if (chartTable) {
+              <section class="panel chart-table">
+                <div class="table-scroll">
+                  <table>
+                    <caption>
+                      Traffic by time bucket
+                    </caption>
+                    <thead>
+                      <tr>
+                        <th>Period</th>
+                        <th>Sessions</th>
+                        <th>Page views</th>
+                        <th>Conversion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (bucket of data.series; track $index) {
+                        <tr>
+                          <td>{{ bucket.label }}</td>
+                          <td>{{ bucket.sessions }}</td>
+                          <td>{{ bucket.pageviews }}</td>
+                          <td>{{ bucket.conversion }}%</td>
+                        </tr>
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            }
             <section class="panel live-panel">
               <div class="panel-header">
                 <h3>Right now</h3>
@@ -551,7 +870,7 @@
                     <button (click)="browser = p.name; filter()">
                       <i
                         [style.background]="
-                          ['#7c66e9', '#b1a3f5', '#51b6a4', '#dce1ef'][$index % 4]
+                          ['#147d78', '#b1a3f5', '#a2b4e7', '#dce1ef'][$index % 4]
                         "
                       ></i
                       ><span>{{ p.name }}</span
@@ -562,6 +881,10 @@
               </div>
             </section>
           </div>
+          <di-geography
+            [rows]="data.distributions.country"
+            (countrySelected)="selectCountry($event)"
+          />
           <div class="workspace-foot">
             <span>◈ Privacy by design. Evidence by default.</span
             ><span>DeucalInt · Product intelligence, connected.</span>
@@ -797,7 +1120,26 @@
             <div class="panel-header">
               <div>
                 <h3>Cohort retention</h3>
-                <p>Exact-day return rate, grouped by first observed week (UTC)</p>
+                <div class="install-tabs">
+                  <button
+                    [class.active]="retentionMode === 'exact'"
+                    (click)="retentionMode = 'exact'; refresh()"
+                  >
+                    On this day</button
+                  ><button
+                    [class.active]="retentionMode === 'rolling'"
+                    (click)="retentionMode = 'rolling'; refresh()"
+                  >
+                    On or after
+                  </button>
+                </div>
+                <p>
+                  {{
+                    retentionMode === 'rolling'
+                      ? 'Return on or after the selected day'
+                      : 'Return on the exact day'
+                  }}, grouped by first observed week (UTC)
+                </p>
               </div>
               <span class="tag">Visitor-based</span>
             </div>
@@ -821,13 +1163,29 @@
                       <td>{{ row.users }}</td>
                       @for (v of row.values; track $index) {
                         <td>
-                          <span
-                            [style.background]="
-                              v === null ? '#f4f5f8' : 'rgba(119,92,231,' + (0.07 + v / 125) + ')'
+                          <button
+                            class="retention-cell"
+                            (click)="
+                              retentionCell = { cohort: row.cohortId, cell: row.cells?.[$index] }
                             "
-                            [style.color]="v > 55 ? 'white' : '#655594'"
-                            >{{ v === null ? '—' : v + '%' }}</span
+                            [style.background]="
+                              v === null
+                                ? 'var(--canvas)'
+                                : 'color-mix(in srgb, #147d78 ' +
+                                  (8 + v * 0.85) +
+                                  '%, var(--surface))'
+                            "
+                            [style.color]="v > 55 ? 'white' : 'var(--ink)'"
+                            [attr.aria-label]="
+                              row.cohort +
+                              ' day ' +
+                              [0, 1, 3, 7, 14, 30][$index] +
+                              ': ' +
+                              (v === null ? 'Not mature' : v + ' percent retained')
+                            "
                           >
+                            {{ v === null ? '—' : v + '%' }}
+                          </button>
                         </td>
                       }
                     </tr>
@@ -846,6 +1204,19 @@
             </div>
           </section>
         }
+        @if (view === 'retention' && retentionCell?.cell) {
+          <div class="panel cohort-detail">
+            <h3>{{ retentionCell.cohort }} · Day {{ retentionCell.cell.day }}</h3>
+            <p>
+              {{ retentionCell.cell.retained }} retained /
+              {{ retentionCell.cell.eligible }} eligible visitors. Rate:
+              {{
+                retentionCell.cell.rate === null ? 'Not yet mature' : retentionCell.cell.rate + '%'
+              }}
+            </p>
+            <button (click)="retentionCell = null">Close details</button>
+          </div>
+        }
         @if (view === 'journeys' && detail) {
           <section class="panel">
             <div class="panel-header">
@@ -855,19 +1226,50 @@
               </div>
               <span class="tag">Behavior graph</span>
             </div>
-            <div class="journey-list">
-              @for (edge of detail; track $index) {
-                <div class="journey-row">
-                  <span class="journey-node">{{ edge.from }}</span
-                  ><span class="journey-edge"
-                    ><i [style.height.px]="3 + (edge.count / (detail[0]?.count || 1)) * 12"></i
-                    ><b>{{ number(edge.count) }} transitions →</b></span
-                  ><span class="journey-node destination">{{ edge.to }}</span>
-                </div>
-              } @empty {
-                <p class="empty">Two or more behavior events in a session create a path.</p>
-              }
+            <div class="journey-controls">
+              <label
+                >Explore<select
+                  aria-label="Journey direction"
+                  [value]="journeyDirection"
+                  (change)="journeyDirection = value($event); refresh()"
+                >
+                  <option value="forward">What happens next</option>
+                  <option value="backward">What happened before</option>
+                </select></label
+              ><label
+                >Anchor event or page<input
+                  aria-label="Journey anchor"
+                  list="journey-anchors"
+                  placeholder="Beginning of session"
+                  [value]="journeyAnchor"
+                  (input)="journeyAnchor = value($event)"
+                  (change)="refresh()"
+                  (keydown.enter)="refresh()" /></label
+              ><datalist id="journey-anchors">
+                @for (name of journeyNames; track name) {
+                  <option [value]="name"></option>
+                }</datalist
+              ><button (click)="journeyAnchor = ''; journeyDirection = 'forward'; refresh()">
+                Reset journey
+              </button>
             </div>
+            <di-journey-flow [graph]="graph" />
+            <details class="legacy-transitions">
+              <summary>All aggregate transitions</summary>
+              <div class="journey-list">
+                @for (edge of detail; track $index) {
+                  <div class="journey-row">
+                    <span class="journey-node">{{ edge.from }}</span
+                    ><span class="journey-edge"
+                      ><i [style.height.px]="3 + (edge.count / (detail[0]?.count || 1)) * 12"></i
+                      ><b>{{ number(edge.count) }} transitions →</b></span
+                    ><span class="journey-node destination">{{ edge.to }}</span>
+                  </div>
+                } @empty {
+                  <p class="empty">Two or more behavior events in a session create a path.</p>
+                }
+              </div>
+            </details>
           </section>
         }
         @if (view === 'experiments' && detail) {
@@ -1104,7 +1506,7 @@
             <h3>Notification inbox</h3>
             <p>
               Local rules evaluate every minute over the last 24 hours. Notifications persist for 90
-              days. Distributed scheduling and external delivery are not enabled.
+              days. Webhook delivery is optional; distributed scheduling remains unavailable.
             </p>
             @for (n of notifications; track n.id) {
               <div class="list-row">
@@ -1123,8 +1525,80 @@
             }
           </section>
         }
+        @if (view === 'alerts' && canManage) {
+          <details class="panel delivery-panel">
+            <summary>Webhook delivery activity</summary>
+            <p>
+              Configured delivery attempts and retry states. Destinations are configured by your
+              workspace operator.
+            </p>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Delivery</th>
+                    <th>Status</th>
+                    <th>Attempts</th>
+                    <th>Last result</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (delivery of deliveries; track delivery.id) {
+                    <tr>
+                      <td>{{ delivery.id.slice(0, 12) }}</td>
+                      <td>{{ delivery.status }}</td>
+                      <td>{{ delivery.attempts }}</td>
+                      <td>{{ delivery.lastError || '—' }}</td>
+                      <td>
+                        @if (delivery.status === 'dead') {
+                          <button (click)="retryDelivery(delivery.id)">Retry delivery</button>
+                        }
+                      </td>
+                    </tr>
+                  } @empty {
+                    <tr>
+                      <td colspan="5">
+                        No deliveries recorded. In-app alerts work without an external destination.
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </details>
+        }
         @if (view === 'settings' && detail) {
           <div class="settings-grid">
+            <section class="panel settings-card">
+              <span class="setting-icon"><di-icon name="users" /></span>
+              <h3>Your account</h3>
+              <p>Change your password and sign out other active sessions.</p>
+              <label
+                >Current password<input
+                  type="password"
+                  autocomplete="current-password"
+                  [value]="currentPassword"
+                  (input)="currentPassword = value($event)" /></label
+              ><label
+                >New password<input
+                  type="password"
+                  autocomplete="new-password"
+                  [value]="changedPassword"
+                  (input)="changedPassword = value($event)"
+              /></label>
+              <p class="field-help">
+                Use at least 12 characters, different from your current password.
+              </p>
+              <button
+                class="primary"
+                [disabled]="accountBusy || changedPassword.length < 12 || !currentPassword"
+                (click)="changePassword()"
+              >
+                {{ accountBusy ? 'Updating…' : 'Update password' }}
+              </button>
+            </section>
+
             <section class="panel settings-card">
               <span class="setting-icon">◈</span>
               <h3>Privacy & retention</h3>
@@ -1152,13 +1626,10 @@
                 Public ingestion tokens can appear in browser code. Dashboard access requires a
                 separate session.
               </p>
-              <pre>
-analytics.init(&#123;
-  projectToken: '{{ demoToken }}',
-  endpoint: 'http://127.0.0.1:8100',
-  consent: true
-&#125;);</pre
-              >
+              <p>Use guided installation to add one snippet and verify your connection.</p>
+              <button class="primary" (click)="navigate('onboarding')">
+                Open installation guide <di-icon name="arrow" /></button
+              ><br /><br />
               <button (click)="rotate()" [disabled]="!canManage">Rotate public token</button>
               @if (rotatedToken) {
                 <code class="block">{{ rotatedToken }}</code>

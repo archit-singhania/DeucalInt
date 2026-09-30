@@ -1,5 +1,9 @@
 # SDK usage
 
+## Simplest installation
+
+The dashboard Connect a source flow generates a single script snippet. See [Browser SDK guide](../../packages/web-sdk/README.md) for the loader, consent API and automatic capture. `npm run build` now emits public `dist/dashboard/ingest.js`.
+
 ## Browser
 
 Import `DeucalInt` or the `analytics` singleton from `packages/web-sdk/src/index.ts` in a TypeScript app. `npm run sdk:build` creates an ESM bundle at `dist/sdk.js`.
@@ -25,7 +29,7 @@ Default batching is 20 events or five seconds. Queue capacity is 500; oldest ent
 
 `data-analytics-ignore` prevents click/form/replay capture under an element. `data-analytics-mask` suppresses click/form capture. Replay always masks text and values, including elements without a mask attribute. No raw HTML is captured. `destroy()` restores patched browser APIs and stops observers. `stats()` reports queued/dropped events and consent status.
 
-Limitations: identify emits an event but does not stitch histories; session state is not coordinated across tabs; compression is not implemented; performance observers are basic observations rather than a complete official Web Vitals implementation. Custom properties must not contain personal or credential data. Server scrubbing is defense in depth, not permission to send secrets.
+Limitations: identify emits an event but does not stitch histories; active tabs coordinate identity, session state and revocation; pending queues use per-tab sessionStorage (reload survives, tab close clears). Compression is not implemented. Official web-vitals5 captures LCP/CLS/INP/TTFB and bounded resource timing. Custom properties must not contain personal or credential data. Server scrubbing is defense in depth, not permission to send secrets.
 
 ## Node
 

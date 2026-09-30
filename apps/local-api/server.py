@@ -6,10 +6,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections import Counter, defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
 from contextlib import contextmanager
 import hashlib, hmac, json, math, os, random, re, secrets, signal, sqlite3, sys, threading, time
 import urllib.request, urllib.error
+import http.client, ipaddress, socket, ssl
+from http.cookies import SimpleCookie
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "apps" / "ai-engine"))
@@ -23,10 +25,12 @@ from engine import (
     funnel,
     retention,
     journeys,
+    journey_graph,
     anomalies,
     experiments,
     investigate,
     percentile,
+    plan_tool,
 )
 
 DB = Path(os.environ.get("DEUCALINT_DB", str(ROOT / ".data" / "deucalint.db")))
@@ -39,8 +43,7 @@ ORIGINS = set(
 STOP = threading.Event()
 RATES = defaultdict(deque)
 RATE_LOCK = threading.Lock()
-LOGIN = {}
-LOGIN_LOCK = threading.Lock()
+LOGIN = {}  # Compatibility for test harnesses; authentication never reads memory state.
 COUNTERS = Counter()
 MAX_BODY = 512 * 1024
 TYPES = {
@@ -83,6 +86,128 @@ def iso(t=None):
 
 def hashed(s):
     return hashlib.sha256(s.encode()).hexdigest()
+
+
+def password_hash(password, salt):
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200000).hex()
+
+
+def production():
+    return os.environ.get("DEUCALINT_ENV") == "production"
+
+
+def secure_cookies():
+    return (
+        os.environ.get("DEUCALINT_SECURE_COOKIES", "1" if production() else "0") == "1"
+    )
+
+
+def session_cookie(token, max_age=28800):
+    return f"di={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}" + (
+        "; Secure" if secure_cookies() else ""
+    )
+
+
+def create_session(c, username):
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    c.execute("DELETE FROM auth_sessions WHERE expires<=?", (now,))
+    c.execute(
+        "INSERT INTO auth_sessions VALUES(?,?,?,?)",
+        (hashed(token), username, now, now + 28800),
+    )
+    c.execute(
+        "DELETE FROM auth_sessions WHERE username=? AND token_hash NOT IN (SELECT token_hash FROM auth_sessions WHERE username=? ORDER BY created DESC LIMIT 10)",
+        (username, username),
+    )
+    return token
+
+
+def website_origin(value):
+    if not value:
+        return ""
+    raw = str(value).strip()
+    if re.search(r"[\s\\]", raw):
+        raise ValueError("Website origin must not contain spaces or backslashes")
+    url = urlparse(raw)
+    if (
+        url.scheme not in ("http", "https")
+        or not url.hostname
+        or url.username
+        or url.password
+        or url.query
+        or url.fragment
+        or url.path not in ("", "/")
+        or (
+            url.scheme == "http"
+            and url.hostname not in ("localhost", "127.0.0.1", "::1")
+        )
+    ):
+        raise ValueError("Website must be an HTTPS origin, such as https://example.com")
+    if url.port is not None and not 1 <= url.port <= 65535:
+        raise ValueError("Invalid website port")
+    hostname = url.hostname.encode("idna").decode().lower()
+    if ":" not in hostname and not re.fullmatch(r"[a-z0-9.-]+", hostname):
+        raise ValueError("Invalid website hostname")
+    host = "[" + hostname + "]" if ":" in hostname else hostname
+    port = url.port
+    suffix = (
+        ":" + str(port)
+        if port and port != (443 if url.scheme == "https" else 80)
+        else ""
+    )
+    return url.scheme + "://" + host + suffix
+
+
+def validate_startup():
+    """Reject unsafe public deployment configuration before opening the listener."""
+    if not production():
+        return
+    if not secure_cookies():
+        raise ValueError(
+            "Production requires DEUCALINT_SECURE_COOKIES=1 and an HTTPS reverse proxy"
+        )
+    public = website_origin(os.environ.get("DEUCALINT_PUBLIC_URL", ""))
+    if not public.startswith("https://"):
+        raise ValueError("Production requires an HTTPS DEUCALINT_PUBLIC_URL")
+    if not ORIGINS or any(
+        not website_origin(x).startswith("https://") for x in ORIGINS
+    ):
+        raise ValueError("Production requires explicit HTTPS DEUCALINT_ORIGINS")
+    if public not in ORIGINS:
+        raise ValueError("DEUCALINT_PUBLIC_URL must be included in DEUCALINT_ORIGINS")
+    for name, default in (
+        ("DEUCALINT_PASSWORD", "deucalint-local"),
+        ("DEUCALINT_VIEWER_PASSWORD", "deucalint-viewer"),
+        ("DEUCALINT_DEMO_TOKEN", "pk_demo_deucalint"),
+        ("DEUCALINT_SANDBOX_TOKEN", "pk_sandbox_deucalint"),
+    ):
+        value = os.environ.get(name, "")
+        if len(value) < (24 if name.endswith("TOKEN") else 16) or value == default:
+            raise ValueError("Production requires a unique strong " + name)
+
+
+def validate_stored_credentials():
+    if not production():
+        return
+    with connect() as c:
+        for account in c.execute("SELECT * FROM accounts"):
+            if any(
+                hmac.compare_digest(
+                    password_hash(default, account["salt"]), account["password"]
+                )
+                for default in ("deucalint-local", "deucalint-viewer")
+            ):
+                raise ValueError(
+                    "Rotate existing default account passwords before production startup"
+                )
+        if c.execute(
+            "SELECT 1 FROM projects WHERE token_hash IN (?,?)",
+            (hashed("pk_demo_deucalint"), hashed("pk_sandbox_deucalint")),
+        ).fetchone():
+            raise ValueError(
+                "Rotate existing default project tokens before production startup"
+            )
 
 
 def scrub(value, depth=0):
@@ -209,6 +334,10 @@ def init_db(seed=True):
         CREATE TABLE IF NOT EXISTS notifications(id TEXT PRIMARY KEY,project TEXT,rule TEXT,created REAL,body TEXT,acknowledged INTEGER DEFAULT 0);
         CREATE INDEX IF NOT EXISTS notification_rule ON notifications(project,rule,created);
         CREATE TABLE IF NOT EXISTS accounts(username TEXT PRIMARY KEY,salt TEXT,password TEXT);
+        CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY,username TEXT,created REAL,expires REAL);
+        CREATE INDEX IF NOT EXISTS auth_session_expiry ON auth_sessions(expires);
+        CREATE TABLE IF NOT EXISTS webhook_outbox(id TEXT PRIMARY KEY,project TEXT,body TEXT,status TEXT DEFAULT 'pending',attempts INTEGER DEFAULT 0,next_attempt REAL,created REAL,last_error TEXT,delivered REAL);
+        CREATE INDEX IF NOT EXISTS webhook_due ON webhook_outbox(status,next_attempt);
         CREATE TABLE IF NOT EXISTS memberships(username TEXT,project TEXT,role TEXT,PRIMARY KEY(username,project));
         CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT,token_hash TEXT,retention INTEGER DEFAULT 90);
         CREATE TABLE IF NOT EXISTS inbox(id INTEGER PRIMARY KEY AUTOINCREMENT,project TEXT,event_id TEXT,body TEXT,status TEXT DEFAULT 'pending',created REAL,UNIQUE(project,event_id));
@@ -219,13 +348,25 @@ def init_db(seed=True):
         CREATE TABLE IF NOT EXISTS tombstones(project TEXT,kind TEXT,value TEXT,PRIMARY KEY(project,kind,value));
         """
         )
+        if "website" not in {r[1] for r in c.execute("PRAGMA table_info(projects)")}:
+            c.execute("ALTER TABLE projects ADD COLUMN website TEXT DEFAULT ''")
         c.execute(
             "INSERT OR IGNORE INTO projects(id,name,token_hash) VALUES(?,?,?)",
-            ("demo", "Northstar Commerce", hashed("pk_demo_deucalint")),
+            (
+                "demo",
+                "Northstar Commerce",
+                hashed(os.environ.get("DEUCALINT_DEMO_TOKEN", "pk_demo_deucalint")),
+            ),
         )
         c.execute(
             "INSERT OR IGNORE INTO projects(id,name,token_hash) VALUES(?,?,?)",
-            ("sandbox", "Empty sandbox", hashed("pk_sandbox_deucalint")),
+            (
+                "sandbox",
+                "Empty sandbox",
+                hashed(
+                    os.environ.get("DEUCALINT_SANDBOX_TOKEN", "pk_sandbox_deucalint")
+                ),
+            ),
         )
         for username, password in (
             ("owner", os.environ.get("DEUCALINT_PASSWORD", "deucalint-local")),
@@ -501,12 +642,177 @@ def evaluate_alerts(now=None):
                 "sessions": m["sessions"],
                 "windowHours": 24,
             }
+            notification_id = secrets.token_hex(12)
             c.execute(
                 "INSERT INTO notifications(id,project,rule,created,body) VALUES(?,?,?,?,?)",
-                (secrets.token_hex(12), project, rule["id"], now, json.dumps(payload)),
+                (notification_id, project, rule["id"], now, json.dumps(payload)),
             )
+            if project in webhook_configuration():
+                body = json.dumps(
+                    {
+                        "id": notification_id,
+                        "type": "alert.triggered",
+                        "project": project,
+                        "rule": rule["id"],
+                        "createdAt": iso(now),
+                        "data": payload,
+                    },
+                    separators=(",", ":"),
+                )
+                c.execute(
+                    "INSERT INTO webhook_outbox(id,project,body,next_attempt,created) VALUES(?,?,?,?,?)",
+                    (notification_id, project, body, now, now),
+                )
     with connect() as c:
         c.execute("DELETE FROM notifications WHERE created<?", (now - 90 * 86400,))
+
+
+def webhook_configuration():
+    config = json.loads(os.environ.get("DEUCALINT_WEBHOOKS", "{}"))
+    if not isinstance(config, dict):
+        raise ValueError("DEUCALINT_WEBHOOKS must be a project-keyed object")
+    return config
+
+
+def webhook_destination(config):
+    """Resolve once and connect to that validated address; never follow redirects or use proxies."""
+    if (
+        not isinstance(config, dict)
+        or not isinstance(config.get("signingSecret"), str)
+        or len(config["signingSecret"]) < 32
+    ):
+        raise ValueError("Webhook requires a signing secret of at least 32 characters")
+    url = urlparse(str(config.get("url", "")))
+    allowed = {
+        x.strip().lower()
+        for x in os.environ.get("DEUCALINT_WEBHOOK_ALLOWED_HOSTS", "").split(",")
+        if x.strip()
+    }
+    if (
+        url.scheme != "https"
+        or not url.hostname
+        or url.hostname.lower() not in allowed
+        or url.username
+        or url.password
+        or url.fragment
+        or url.port not in (None, 443)
+    ):
+        raise ValueError(
+            "Webhook destination must use HTTPS port 443 and an explicitly allowed host"
+        )
+    addresses = {
+        r[4][0] for r in socket.getaddrinfo(url.hostname, 443, type=socket.SOCK_STREAM)
+    }
+    if not addresses or any(
+        not ipaddress.ip_address(ip).is_global or ipaddress.ip_address(ip).is_multicast
+        for ip in addresses
+    ):
+        raise ValueError(
+            "Webhook destination must resolve exclusively to public addresses"
+        )
+    return url, sorted(addresses)[0]
+
+
+def send_webhook(config, body, delivery_id, timestamp):
+    url, address = webhook_destination(config)
+
+    # HTTPSConnection still verifies the original hostname while the TCP address is pinned.
+    class PinnedHTTPSConnection(http.client.HTTPSConnection):
+        def connect(self):
+            raw = socket.create_connection((address, 443), timeout=5)
+            try:
+                self.sock = ssl.create_default_context().wrap_socket(
+                    raw, server_hostname=url.hostname
+                )
+            except Exception:
+                raw.close()
+                raise
+
+    signature = hmac.new(
+        config["signingSecret"].encode(),
+        str(timestamp).encode() + b"." + body.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    connection = PinnedHTTPSConnection(url.hostname, 443, timeout=5)
+    try:
+        connection.request(
+            "POST",
+            (url.path or "/") + ("?" + url.query if url.query else ""),
+            body=body.encode(),
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "DeucalInt-Webhooks/1",
+                "Idempotency-Key": delivery_id,
+                "X-DeucalInt-Timestamp": str(timestamp),
+                "X-DeucalInt-Signature": "sha256=" + signature,
+            },
+        )
+        response = connection.getresponse()
+        return response.status
+    finally:
+        connection.close()
+
+
+def dispatch_webhooks(now=None):
+    """At-least-once delivery; receiver deduplicates the stable Idempotency-Key."""
+    now = time.time() if now is None else now
+    config = webhook_configuration()
+    if not config:
+        return
+    for _ in range(10):
+        with connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            row = c.execute(
+                "SELECT * FROM webhook_outbox WHERE status IN ('pending','retry','delivering') AND next_attempt<=? ORDER BY created LIMIT 1",
+                (now,),
+            ).fetchone()
+            if not row:
+                return
+            if row["project"] not in config:
+                c.execute(
+                    "UPDATE webhook_outbox SET next_attempt=? WHERE id=?",
+                    (now + 60, row["id"]),
+                )
+                continue
+            attempts = row["attempts"] + 1
+            if attempts > 6:
+                c.execute(
+                    "UPDATE webhook_outbox SET status='dead',last_error='Delivery lease exhausted' WHERE id=?",
+                    (row["id"],),
+                )
+                continue
+            c.execute(
+                "UPDATE webhook_outbox SET status='delivering',attempts=?,next_attempt=? WHERE id=?",
+                (attempts, now + 120, row["id"]),
+            )
+        status, error, delivered = "retry", None, None
+        try:
+            code = send_webhook(
+                config[row["project"]], row["body"], row["id"], int(now)
+            )
+            if 200 <= code < 300:
+                status, delivered = "sent", now
+            else:
+                error = "HTTP " + str(code)
+                if 300 <= code < 500 and code not in (408, 429):
+                    status = "dead"
+        except ValueError:
+            status, error = "dead", "Destination configuration rejected"
+        except (OSError, http.client.HTTPException):
+            error = "Destination unavailable"
+        if status == "retry" and attempts >= 6:
+            status = "dead"
+        with connect() as c:
+            c.execute(
+                "UPDATE webhook_outbox SET status=?,next_attempt=?,last_error=?,delivered=? WHERE id=?",
+                (
+                    status,
+                    now + min(3600, 30 * 2 ** (attempts - 1)) + secrets.randbelow(10),
+                    error,
+                    delivered,
+                    row["id"],
+                ),
+            )
 
 
 def worker():
@@ -525,10 +831,26 @@ def worker():
                         "DELETE FROM inbox WHERE status='done' AND created<?",
                         (time.time() - 86400,),
                     )
+                    c.execute(
+                        "DELETE FROM auth_sessions WHERE expires<=?", (time.time(),)
+                    )
+                    c.execute(
+                        "DELETE FROM webhook_outbox WHERE status IN ('sent','dead') AND created<?",
+                        (time.time() - 90 * 86400,),
+                    )
                 evaluate_alerts()
                 last = time.time()
-        except sqlite3.Error:
+        except (sqlite3.Error, ValueError):
             COUNTERS["worker_failures"] += 1
+
+
+def delivery_worker():
+    # Slow external receivers must never block event ingestion or alert evaluation.
+    while not STOP.wait(5):
+        try:
+            dispatch_webhooks()
+        except (sqlite3.Error, ValueError):
+            COUNTERS["delivery_worker_failures"] += 1
 
 
 def read_events(project, days=30, ast=None):
@@ -560,6 +882,21 @@ def read_events(project, days=30, ast=None):
 
 
 def overview(project, days=7, ast=None):
+    if DISTRIBUTED and os.environ.get("DEUCALINT_WAREHOUSE_OVERVIEW") == "1":
+        token = json.loads(os.environ.get("DEUCALINT_QUERY_TOKENS", "{}")).get(project)
+        if not token:
+            raise PermissionError("No warehouse credential configured for this project")
+        query = {"days": days}
+        if ast:
+            query["segment"] = json.dumps(ast, separators=(",", ":"))
+        request = urllib.request.Request(
+            os.environ.get("DEUCALINT_ANALYTICS_URL", "http://analytics-api:8080")
+            + "/v1/overview?"
+            + urlencode(query),
+            headers={"Authorization": "Bearer " + token},
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.load(response)
     events = read_events(project, days * 2, ast)
     now = time.time()
     cutoff = now - days * 86400
@@ -631,7 +968,7 @@ class Handler(BaseHTTPRequestHandler):
     def send(self, status, data, headers=None, ctype="application/json"):
         raw = (
             json.dumps(data, allow_nan=False).encode()
-            if ctype == "application/json"
+            if ctype == "application/json" and not isinstance(data, bytes)
             else data.encode() if isinstance(data, str) else data
         )
         self.send_response(status)
@@ -640,7 +977,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
-        if self.headers.get("Origin") in ORIGINS:
+        if status >= 400:
+            self.send_header("Connection", "close")
+            self.close_connection = True
+        self.send_header("X-Frame-Options", "DENY")
+        if secure_cookies():
+            self.send_header("Strict-Transport-Security", "max-age=31536000")
+        if ctype == "text/html":
+            self.send_header(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+            )
+        if self.headers.get("Origin") in ORIGINS or getattr(
+            self, "ingest_origin_allowed", False
+        ):
             self.send_header("Access-Control-Allow-Origin", self.headers["Origin"])
             self.send_header("Access-Control-Allow-Credentials", "true")
             self.send_header("Vary", "Origin")
@@ -650,6 +1000,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
     def body(self):
+        if self.headers.get("Transfer-Encoding"):
+            raise ValueError("Transfer-Encoding is unsupported; send a Content-Length")
         length = int(self.headers.get("Content-Length", "0"))
         if length > MAX_BODY:
             raise OverflowError("Payload exceeds 512 KiB")
@@ -663,31 +1015,40 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def user(self):
-        cookie = next(
-            (
-                part.strip()[3:]
-                for part in self.headers.get("Cookie", "").split(";")
-                if part.strip().startswith("di=")
-            ),
-            None,
-        )
-        with LOGIN_LOCK:
-            user = LOGIN.get(cookie)
-            if user and user["expires"] < time.time():
-                LOGIN.pop(cookie, None)
-                user = None
-        if not user:
-            raise PermissionError("Sign in to continue")
-        user = dict(user)
-        if not DISTRIBUTED:
-            with connect() as c:
-                memberships = c.execute(
+        token = self.session_token()
+        with connect() as c:
+            session = c.execute(
+                "SELECT username,expires FROM auth_sessions WHERE token_hash=? AND expires>?",
+                (hashed(token), time.time()),
+            ).fetchone()
+            if not session:
+                raise PermissionError("Sign in to continue")
+            memberships = {
+                r["project"]: r["role"]
+                for r in c.execute(
                     "SELECT project,role FROM memberships WHERE username=?",
-                    (user.get("username", user["role"]),),
-                ).fetchall()
-            user["memberships"] = {r["project"]: r["role"] for r in memberships}
-            user["projects"] = list(user["memberships"])
-        return user
+                    (session["username"],),
+                )
+            }
+        if DISTRIBUTED:
+            available = json.loads(os.environ.get("DEUCALINT_QUERY_TOKENS", "{}"))
+            memberships = {p: role for p, role in memberships.items() if p in available}
+        return {
+            "username": session["username"],
+            "expires": session["expires"],
+            "memberships": memberships,
+            "projects": list(memberships),
+            "role": next(iter(memberships.values()), "viewer"),
+        }
+
+    def session_token(self):
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return ""
+        token = cookie["di"].value if "di" in cookie else ""
+        return token if re.fullmatch(r"[A-Za-z0-9_-]{43}", token) else ""
 
     def limited(self, key, limit):
         with RATE_LOCK:
@@ -701,6 +1062,14 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def do_OPTIONS(self):
+        if urlparse(self.path).path == "/v1/batch" and self.headers.get("Origin"):
+            with connect() as c:
+                self.ingest_origin_allowed = bool(
+                    c.execute(
+                        "SELECT 1 FROM projects WHERE website=?",
+                        (self.headers["Origin"],),
+                    ).fetchone()
+                )
         self.send(
             204,
             b"",
@@ -747,15 +1116,23 @@ class Handler(BaseHTTPRequestHandler):
             COUNTERS["request_ms_sum"] += (time.perf_counter() - started) * 1000
 
     def route(self, method):
+        self.ingest_origin_allowed = False
         url = urlparse(self.path)
         path = url.path
         q = parse_qs(url.query)
         if (
             method in ("POST", "DELETE")
+            and path != "/v1/batch"
             and self.headers.get("Origin")
             and self.headers["Origin"] not in ORIGINS
         ):
             raise PermissionError("Origin is not allowed")
+        if (
+            method in ("POST", "DELETE")
+            and path.startswith("/api/")
+            and self.headers.get("Sec-Fetch-Site") == "cross-site"
+        ):
+            raise PermissionError("Cross-site account requests are not allowed")
         if path == "/health":
             return self.send(
                 200,
@@ -786,6 +1163,8 @@ class Handler(BaseHTTPRequestHandler):
             data = self.body()
             username = str(data.get("username", data.get("role", "owner")))
             password = str(data.get("password", ""))
+            if len(username) > 64 or len(password) > 1024:
+                raise PermissionError("Invalid credentials")
             with connect() as c:
                 account = c.execute(
                     "SELECT * FROM accounts WHERE username=?", (username,)
@@ -793,38 +1172,34 @@ class Handler(BaseHTTPRequestHandler):
                 memberships = c.execute(
                     "SELECT project,role FROM memberships WHERE username=?", (username,)
                 ).fetchall()
-            if not account or not hmac.compare_digest(
-                hashlib.pbkdf2_hmac(
-                    "sha256", password.encode(), account["salt"].encode(), 200000
-                ).hex(),
-                account["password"],
-            ):
+            candidate = password_hash(
+                password, account["salt"] if account else "nonexistent-account-salt"
+            )
+            if not account or not hmac.compare_digest(candidate, account["password"]):
                 raise PermissionError("Invalid credentials")
             role = memberships[0]["role"] if memberships else "viewer"
-            token = secrets.token_urlsafe(32)
-            with LOGIN_LOCK:
-                LOGIN[token] = {
-                    "role": role,
-                    "username": username,
-                    "projects": (
-                        list(json.loads(os.environ.get("DEUCALINT_QUERY_TOKENS", "{}")))
-                        if DISTRIBUTED
-                        else ["demo", "sandbox"]
-                    ),
-                    "expires": time.time() + 8 * 3600,
-                }
+            with connect() as c:
+                c.execute("BEGIN IMMEDIATE")
+                current = c.execute(
+                    "SELECT password FROM accounts WHERE username=?", (username,)
+                ).fetchone()
+                if not current or not hmac.compare_digest(
+                    current[0], account["password"]
+                ):
+                    raise PermissionError("Credentials changed; sign in again")
+                token = create_session(c, username)
             return self.send(
                 200,
                 {"role": role},
-                {
-                    "Set-Cookie": f"di={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800"
-                },
+                {"Set-Cookie": session_cookie(token)},
             )
         if path == "/v1/batch" and method == "POST":
             data = self.body()
             if not isinstance(data, dict):
                 raise ValueError("Batch must be an object")
             if DISTRIBUTED:
+                if self.headers.get("Origin") and self.headers["Origin"] not in ORIGINS:
+                    raise PermissionError("Origin is not allowed")
                 request = urllib.request.Request(
                     os.environ.get("DEUCALINT_COLLECTOR_URL", "http://collector:8080")
                     + "/v1/batch",
@@ -849,6 +1224,10 @@ class Handler(BaseHTTPRequestHandler):
                 ).fetchone()
             if not p:
                 raise PermissionError("Invalid ingestion token")
+            origin = self.headers.get("Origin")
+            self.ingest_origin_allowed = bool(origin and origin == p["website"])
+            if origin and origin not in ORIGINS and not self.ingest_origin_allowed:
+                raise PermissionError("Origin is not allowed for this project")
             if self.limited("ingest:" + p["id"], 120):
                 return self.send(
                     429, {"error": "Project rate limit exceeded"}, {"Retry-After": "60"}
@@ -880,6 +1259,13 @@ class Handler(BaseHTTPRequestHandler):
             ):
                 raise PermissionError("Invalid path")
             if not asset.is_file():
+                if path == "/ingest.js":
+                    return self.send(
+                        404,
+                        {
+                            "error": "Browser capture script has not been built; run npm run build"
+                        },
+                    )
                 asset = ROOT / "dist" / "dashboard" / "index.html"
             if asset.is_file():
                 import mimetypes
@@ -896,23 +1282,61 @@ class Handler(BaseHTTPRequestHandler):
             )
         user = self.user()
         if path == "/api/logout":
-            cookie = next(
-                (
-                    part.strip()[3:]
-                    for part in self.headers.get("Cookie", "").split(";")
-                    if part.strip().startswith("di=")
-                ),
-                None,
-            )
-            with LOGIN_LOCK:
-                LOGIN.pop(cookie, None)
+            if method != "POST":
+                return self.send(405, {"error": "Use POST"}, {"Allow": "POST"})
+            with connect() as c:
+                c.execute(
+                    "DELETE FROM auth_sessions WHERE token_hash=?",
+                    (hashed(self.session_token()),),
+                )
             return self.send(
                 200,
                 {"ok": True},
-                {"Set-Cookie": "di=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"},
+                {"Set-Cookie": session_cookie("", 0)},
             )
         if path == "/api/me":
-            return self.send(200, {"role": user["role"]})
+            return self.send(
+                200,
+                {
+                    "role": user["role"],
+                    "username": user["username"],
+                    "expiresAt": iso(user["expires"]),
+                },
+            )
+        if path == "/api/account/password" and method == "POST":
+            if self.limited("password:" + user["username"], 5):
+                return self.send(429, {"error": "Too many password change attempts"})
+            data = self.body()
+            current, new = str(data.get("currentPassword", "")), str(
+                data.get("newPassword", "")
+            )
+            if not 12 <= len(new) <= 1024 or current == new:
+                raise ValueError(
+                    "Choose a different password containing 12–1024 characters"
+                )
+            with connect() as c:
+                c.execute("BEGIN IMMEDIATE")
+                account = c.execute(
+                    "SELECT * FROM accounts WHERE username=?", (user["username"],)
+                ).fetchone()
+                if not account or not hmac.compare_digest(
+                    password_hash(current, account["salt"]), account["password"]
+                ):
+                    raise PermissionError("Current password is incorrect")
+                salt = secrets.token_hex(16)
+                c.execute(
+                    "UPDATE accounts SET salt=?,password=? WHERE username=?",
+                    (salt, password_hash(new, salt), user["username"]),
+                )
+                c.execute(
+                    "DELETE FROM auth_sessions WHERE username=?", (user["username"],)
+                )
+                token = create_session(c, user["username"])
+            return self.send(
+                200,
+                {"ok": True, "otherSessionsRevoked": True},
+                {"Set-Cookie": session_cookie(token)},
+            )
         if path == "/api/projects" and method == "POST":
             if DISTRIBUTED:
                 return self.send(
@@ -1045,6 +1469,135 @@ class Handler(BaseHTTPRequestHandler):
         if not 1 <= days <= 90:
             raise ValueError("Days must be 1–90")
         ast = validate_ast(json.loads(q["segment"][0])) if "segment" in q else None
+        if path == "/api/setup":
+            with connect() as c:
+                website = c.execute(
+                    "SELECT website FROM projects WHERE id=?", (project,)
+                ).fetchone()
+                if not DISTRIBUTED:
+                    summary = c.execute(
+                        "SELECT count(*) AS total,max(ts) AS last,sum(CASE WHEN coalesce(json_extract(body,'$.context.sample'),0)=0 THEN 1 ELSE 0 END) AS real,max(CASE WHEN coalesce(json_extract(body,'$.context.sample'),0)=0 THEN ts END) AS last_real FROM events WHERE project=?",
+                        (project,),
+                    ).fetchone()
+                    counts = [
+                        {"type": r[0], "count": r[1]}
+                        for r in c.execute(
+                            "SELECT json_extract(body,'$.type'),count(*) FROM events WHERE project=? GROUP BY json_extract(body,'$.type') ORDER BY count(*) DESC",
+                            (project,),
+                        )
+                    ]
+            if DISTRIBUTED:
+                es = read_events(project, days)
+                real = [e for e in es if not e.get("context", {}).get("sample")]
+                summary = {
+                    "total": len(es),
+                    "last": max((stamp(e["timestamp"]) for e in es), default=None),
+                    "real": len(real),
+                    "last_real": max(
+                        (stamp(e["timestamp"]) for e in real), default=None
+                    ),
+                }
+                counts = [
+                    {"type": t, "count": n}
+                    for t, n in Counter(e["type"] for e in es).most_common()
+                ]
+            return self.send(
+                200,
+                {
+                    "eventCount": summary["total"],
+                    "realEventCount": summary["real"] or 0,
+                    "lastEventAt": (
+                        iso(summary["last"]) if summary["last"] is not None else None
+                    ),
+                    "lastRealEventAt": (
+                        iso(summary["last_real"])
+                        if summary["last_real"] is not None
+                        else None
+                    ),
+                    "eventTypes": counts,
+                    "connected": bool(summary["real"]),
+                    "windowDays": days if DISTRIBUTED else None,
+                    "collectorEndpoint": os.environ.get(
+                        "DEUCALINT_PUBLIC_URL", ""
+                    ).rstrip("/"),
+                    "collectorPath": "/v1/batch",
+                    "sdkUrl": "/ingest.js",
+                    "websiteUrl": website[0] if website else "",
+                    "automaticEvents": [
+                        "page_view",
+                        "click",
+                        "form_submit",
+                        "scroll_depth",
+                        "web_vital",
+                        "network",
+                        "errors",
+                    ],
+                    "consentRequired": True,
+                    "replayOptIn": True,
+                },
+            )
+        if path == "/api/events/catalog":
+            if DISTRIBUTED or ast:
+                es = read_events(project, days, ast)
+                groups = defaultdict(list)
+                for e in es:
+                    groups[(e["name"], e["type"])].append(e)
+                catalog = [
+                    {
+                        "name": name,
+                        "type": typ,
+                        "count": len(group),
+                        "sessions": len({e["sessionId"] for e in group}),
+                        "lastSeenAt": max(e["timestamp"] for e in group),
+                    }
+                    for (name, typ), group in groups.items()
+                ]
+            else:
+                with connect() as c:
+                    catalog = [
+                        {
+                            "name": r[0],
+                            "type": r[1],
+                            "count": r[2],
+                            "sessions": r[3],
+                            "lastSeenAt": iso(r[4]),
+                        }
+                        for r in c.execute(
+                            "SELECT json_extract(body,'$.name'),json_extract(body,'$.type'),count(*),count(DISTINCT session),max(ts) FROM events WHERE project=? AND ts>=? AND ts<=? GROUP BY json_extract(body,'$.name'),json_extract(body,'$.type')",
+                            (project, time.time() - days * 86400, time.time()),
+                        )
+                    ]
+            catalog.sort(key=lambda x: (-x["count"], x["name"]))
+            return self.send(
+                200,
+                {
+                    "events": catalog[:200],
+                    "total": len(catalog),
+                    "windowDays": days,
+                    "truncated": len(catalog) > 200,
+                },
+            )
+        if path == "/api/deliveries":
+            if user["role"] not in ("owner", "admin"):
+                raise PermissionError("Admin role required")
+            with connect() as c:
+                if method == "POST":
+                    delivery_id = str(self.body().get("id", ""))
+                    c.execute(
+                        "UPDATE webhook_outbox SET status='pending',attempts=0,next_attempt=?,last_error=NULL WHERE id=? AND project=? AND status='dead'",
+                        (time.time(), delivery_id, project),
+                    )
+                rows = [
+                    dict(r)
+                    for r in c.execute(
+                        "SELECT id,status,attempts,created,next_attempt AS nextAttempt,last_error AS lastError,delivered FROM webhook_outbox WHERE project=? ORDER BY created DESC LIMIT 100",
+                        (project,),
+                    )
+                ]
+            return self.send(
+                200,
+                {"configured": project in webhook_configuration(), "deliveries": rows},
+            )
         if path == "/api/notifications":
             with connect() as c:
                 if method == "POST":
@@ -1100,7 +1653,9 @@ class Handler(BaseHTTPRequestHandler):
                     if STOP.is_set():
                         break
                     try:
-                        self.user()
+                        active_user = self.user()
+                        if project not in active_user["projects"]:
+                            break
                     except PermissionError:
                         break
                     es = read_events(project, 5 / 1440)
@@ -1120,19 +1675,27 @@ class Handler(BaseHTTPRequestHandler):
             with connect() as c:
                 if method == "POST":
                     data = self.body()
-                    value = int(data["retention"])
-                    if value not in (7, 30, 90, 180, 365):
-                        raise ValueError("Invalid retention")
-                    c.execute(
-                        "UPDATE projects SET retention=? WHERE id=?", (value, project)
-                    )
+                    if "retention" in data:
+                        value = int(data["retention"])
+                        if value not in (7, 30, 90, 180, 365):
+                            raise ValueError("Invalid retention")
+                        c.execute(
+                            "UPDATE projects SET retention=? WHERE id=?",
+                            (value, project),
+                        )
+                    if "websiteUrl" in data:
+                        c.execute(
+                            "UPDATE projects SET website=? WHERE id=?",
+                            (website_origin(data["websiteUrl"]), project),
+                        )
                     c.execute(
                         "INSERT INTO audit(project,action,ts) VALUES(?,?,?)",
-                        (project, "retention.updated", iso()),
+                        (project, "settings.updated", iso()),
                     )
                 p = dict(
                     c.execute(
-                        "SELECT id,name,retention FROM projects WHERE id=?", (project,)
+                        "SELECT id,name,retention,website AS websiteUrl FROM projects WHERE id=?",
+                        (project,),
                     ).fetchone()
                 )
             return self.send(200, p)
@@ -1261,7 +1824,18 @@ class Handler(BaseHTTPRequestHandler):
                 ),
             )
         if path == "/api/retention":
-            return self.send(200, retention(es, time.time()))
+            return self.send(
+                200, retention(es, time.time(), mode=q.get("mode", ["exact"])[0])
+            )
+        if path == "/api/journey-graph":
+            return self.send(
+                200,
+                journey_graph(
+                    es,
+                    anchor=q.get("anchor", [None])[0],
+                    direction=q.get("direction", ["forward"])[0],
+                ),
+            )
         if path == "/api/journeys":
             return self.send(200, journeys(es))
         if path == "/api/experiments":
@@ -1273,7 +1847,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/investigate" and method == "POST":
             data = self.body()
             question = str(data.get("question", ""))[:500]
-            if not any(
+            focus = plan_tool(question)
+            if focus == "compare_metrics" and not any(
                 term in question.lower()
                 for term in (
                     "conversion",
@@ -1293,19 +1868,6 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
             lower = question.lower()
-            focus = (
-                "query_errors"
-                if "error" in lower
-                else (
-                    "query_performance"
-                    if "latency" in lower
-                    else (
-                        "query_deployments"
-                        if "deployment" in lower
-                        else "compare_metrics"
-                    )
-                )
-            )
             planner_mode = "deterministic"
             planned_segment = {"and": []}
             if os.environ.get("DEUCALINT_AI_URL"):
@@ -1410,7 +1972,7 @@ class Handler(BaseHTTPRequestHandler):
                     [
                         e.get("properties", {}).get(k, 0)
                         for e in es
-                        if e["type"] == "performance"
+                        if e["type"] == "performance" and k in e.get("properties", {})
                     ],
                     0.75,
                 )
@@ -1444,9 +2006,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    init_db("--no-seed" not in sys.argv and not DISTRIBUTED)
+    validate_startup()
+    init_db("--no-seed" not in sys.argv and not DISTRIBUTED and not production())
+    validate_stored_credentials()
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
+    deliveries = threading.Thread(target=delivery_worker, daemon=True)
+    deliveries.start()
     server = ThreadingHTTPServer(
         (
             os.environ.get("DEUCALINT_HOST", "127.0.0.1"),
@@ -1464,6 +2030,7 @@ def main():
         STOP.set()
         server.server_close()
         thread.join(timeout=5)
+        deliveries.join(timeout=5)
 
 
 if __name__ == "__main__":

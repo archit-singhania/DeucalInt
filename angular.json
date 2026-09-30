@@ -1,7 +1,9 @@
 {
   "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
   "version": 1,
-  "cli": { "analytics": false },
+  "cli": {
+    "analytics": false
+  },
   "projects": {
     "deucalint": {
       "projectType": "application",
@@ -14,13 +16,43 @@
             "browser": "apps/dashboard/src/main.ts",
             "index": "apps/dashboard/index.html",
             "tsConfig": "tsconfig.app.json",
-            "outputPath": { "base": "dist/dashboard", "browser": "" },
-            "styles": ["apps/dashboard/src/styles.css", "apps/dashboard/src/premium.css"],
-            "assets": [{ "glob": "**/*", "input": "apps/dashboard/public" }],
-            "optimization": { "scripts": true, "styles": true, "fonts": false },
-            "budgets": [{ "type": "initial", "maximumWarning": "650kB", "maximumError": "900kB" }]
+            "outputPath": {
+              "base": "dist/dashboard",
+              "browser": ""
+            },
+            "styles": [
+              "apps/dashboard/src/styles.css",
+              "apps/dashboard/src/premium.css",
+              "apps/dashboard/src/studio.css"
+            ],
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "apps/dashboard/public"
+              }
+            ],
+            "optimization": {
+              "scripts": true,
+              "styles": {
+                "minify": true,
+                "inlineCritical": false
+              },
+              "fonts": false
+            },
+            "budgets": [
+              {
+                "type": "initial",
+                "maximumWarning": "650kB",
+                "maximumError": "900kB"
+              }
+            ]
           },
-          "configurations": { "development": { "optimization": false, "sourceMap": true } }
+          "configurations": {
+            "development": {
+              "optimization": false,
+              "sourceMap": true
+            }
+          }
         },
         "serve": {
           "builder": "@angular/build:dev-server",

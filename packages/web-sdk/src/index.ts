@@ -21,7 +21,10 @@ export interface Options {
   release?: string;
   batchSize?: number;
   flushInterval?: number;
+  /** Resource metadata only: URLs omit query strings, fragments, and hostnames. */
+  resourceTiming?: boolean;
 }
+const SESSION_TIMEOUT = 30 * 60 * 1000;
 const sensitive =
   /password|secret|token|authorization|cookie|email|phone|credit|card|cvv|input|^value$|^text$|^html$|^stack$|^message$/i;
 export function sanitize(input: unknown, depth = 0): unknown {
@@ -59,6 +62,9 @@ export class DeucalInt {
   private get key() {
     return 'deucalint:' + this.options.projectToken;
   }
+  private get queueKey() {
+    return this.key + ':queue';
+  }
   init(options: Options) {
     this.destroy();
     this.queue = [];
@@ -69,12 +75,32 @@ export class DeucalInt {
     this.nativeFetch = window.fetch.bind(window);
     try {
       const saved = JSON.parse(localStorage.getItem(this.key) || '{}');
-      this.anonymousId = saved.anonymousId || crypto.randomUUID();
-      this.queue = (saved.queue || []).slice(-500);
+      this.anonymousId =
+        typeof saved.anonymousId === 'string' ? saved.anonymousId : crypto.randomUUID();
+      this.sessionId =
+        typeof saved.sessionId === 'string' &&
+        Date.now() - Number(saved.lastActivity) < SESSION_TIMEOUT
+          ? saved.sessionId
+          : crypto.randomUUID();
+      // Each tab owns its queue so another tab cannot overwrite unacknowledged events.
+      const queued = JSON.parse(
+        sessionStorage.getItem(this.queueKey) || JSON.stringify(saved.queue || []),
+      );
+      this.queue = Array.isArray(queued)
+        ? queued
+            .filter(
+              (event) =>
+                event &&
+                typeof event.eventId === 'string' &&
+                event.schemaVersion === 1 &&
+                event.anonymousId === this.anonymousId,
+            )
+            .slice(-500)
+        : [];
     } catch {
       this.anonymousId = crypto.randomUUID();
+      this.sessionId = crypto.randomUUID();
     }
-    this.sessionId = crypto.randomUUID();
     this.lastActivity = Date.now();
     this.page();
     this.instrument();
@@ -82,10 +108,12 @@ export class DeucalInt {
     return this;
   }
   consent(granted: boolean) {
+    if (granted && this.allowed) return;
     const opts = { ...this.options, consent: granted };
     if (!granted) {
       try {
         localStorage.removeItem(this.key);
+        sessionStorage.removeItem(this.queueKey);
       } catch {}
       this.queue = [];
     }
@@ -93,7 +121,7 @@ export class DeucalInt {
   }
   track(name: string, properties: Record<string, unknown> = {}, type = 'product') {
     if (!this.allowed) return;
-    if (Date.now() - this.lastActivity > 30 * 60 * 1000) this.sessionId = crypto.randomUUID();
+    this.syncSession();
     this.lastActivity = Date.now();
     const ua = navigator.userAgent;
     const browser = /Firefox/.test(ua)
@@ -112,9 +140,9 @@ export class DeucalInt {
       anonymousId: this.anonymousId,
       sessionId: this.sessionId,
       page: {
-        path: location.pathname,
-        url: location.origin + location.pathname,
-        referrer: document.referrer.split('?')[0],
+        path: sanitize(location.pathname),
+        url: sanitize(location.origin + location.pathname),
+        referrer: this.safeReferrer(),
       },
       device: {
         type: innerWidth < 768 ? 'mobile' : 'desktop',
@@ -144,9 +172,11 @@ export class DeucalInt {
     this.track('identify', { userId: pseudonymousId }, 'identity');
   }
   reset() {
+    if (!this.allowed) return;
     this.queue = [];
     this.anonymousId = crypto.randomUUID();
     this.sessionId = crypto.randomUUID();
+    this.lastActivity = Date.now();
     this.persist();
   }
   experiment(name: string, variant: string) {
@@ -163,9 +193,38 @@ export class DeucalInt {
     try {
       localStorage.setItem(
         this.key,
-        JSON.stringify({ anonymousId: this.anonymousId, queue: this.queue }),
+        JSON.stringify({
+          anonymousId: this.anonymousId,
+          sessionId: this.sessionId,
+          lastActivity: this.lastActivity,
+        }),
       );
     } catch {}
+    try {
+      sessionStorage.setItem(this.queueKey, JSON.stringify(this.queue));
+    } catch {}
+  }
+  private syncSession() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(this.key) || '{}');
+      if (typeof saved.anonymousId === 'string') this.anonymousId = saved.anonymousId;
+      if (
+        typeof saved.sessionId === 'string' &&
+        Date.now() - Number(saved.lastActivity) < SESSION_TIMEOUT
+      ) {
+        this.sessionId = saved.sessionId;
+        this.lastActivity = Number(saved.lastActivity);
+      }
+    } catch {}
+    if (Date.now() - this.lastActivity > SESSION_TIMEOUT) this.sessionId = crypto.randomUUID();
+  }
+  private safeReferrer() {
+    try {
+      const url = new URL(document.referrer);
+      return sanitize(url.origin + url.pathname);
+    } catch {
+      return '';
+    }
   }
   async flush() {
     if (!this.allowed || this.inFlight || !this.queue.length || !navigator.onLine) return;
@@ -230,6 +289,29 @@ export class DeucalInt {
     this.track('snapshot', { nodes, width: innerWidth, height: innerHeight }, 'replay');
   }
   private instrument() {
+    const instrumentationGeneration = this.generation;
+    this.on(window, 'storage', (event) => {
+      const update = event as StorageEvent;
+      // Revocation in any tab immediately stops capture in every active tab.
+      if ((update.key === this.key || update.key === null) && update.newValue === null) {
+        this.queue = [];
+        try {
+          sessionStorage.removeItem(this.queueKey);
+        } catch {}
+        this.destroy();
+      } else if (update.key === this.key && update.newValue) {
+        try {
+          const shared = JSON.parse(update.newValue);
+          if (typeof shared.anonymousId === 'string' && shared.anonymousId !== this.anonymousId) {
+            this.queue = [];
+            sessionStorage.removeItem(this.queueKey);
+            this.anonymousId = shared.anonymousId;
+            this.sessionId = shared.sessionId;
+            this.lastActivity = Number(shared.lastActivity);
+          }
+        } catch {}
+      }
+    });
     this.on(window, 'online', () => void this.flush());
     this.on(window, 'popstate', () => this.page());
     const push = history.pushState,
@@ -249,12 +331,17 @@ export class DeucalInt {
       if (history.replaceState === wrappedReplace) history.replaceState = replace;
     });
     this.on(document, 'click', (event) => {
-      const el = event.target as Element;
+      const el = event.target;
+      if (!(el instanceof Element)) return;
       if (el.closest('[data-analytics-ignore],[data-analytics-mask]')) return;
-      this.track('click', { tag: el.tagName.toLowerCase() });
+      const action = el.closest('[data-deucalint-event]')?.getAttribute('data-deucalint-event');
+      this.track(action?.slice(0, 100) || 'click', { tag: el.tagName.toLowerCase() });
     });
     this.on(document, 'submit', (event) => {
-      if (!(event.target as Element).closest('[data-analytics-ignore],[data-analytics-mask]'))
+      if (
+        event.target instanceof Element &&
+        !event.target.closest('[data-analytics-ignore],[data-analytics-mask]')
+      )
         this.track('form_submit');
     });
     let maxDepth = 0;
@@ -284,7 +371,7 @@ export class DeucalInt {
       const own = url.includes('/v1/batch');
       try {
         const response = await original(...args);
-        if (!own)
+        if (!own && instrumentationGeneration === this.generation)
           this.track(
             'fetch',
             {
@@ -296,7 +383,7 @@ export class DeucalInt {
           );
         return response;
       } catch (error) {
-        if (!own)
+        if (!own && instrumentationGeneration === this.generation)
           this.track(
             'fetch',
             {
@@ -335,7 +422,11 @@ export class DeucalInt {
       this.addEventListener(
         'loadend',
         () => {
-          if (info && !info.path.includes('/v1/batch'))
+          if (
+            info &&
+            !info.path.includes('/v1/batch') &&
+            instrumentationGeneration === sdk.generation
+          )
             sdk.track(
               'xhr',
               { ...info, status: this.status, duration: Math.round(performance.now() - start) },
@@ -353,6 +444,45 @@ export class DeucalInt {
       if (XMLHttpRequest.prototype.send === wrappedSend) XMLHttpRequest.prototype.send = xhrSend;
     });
     const vitalsGeneration = this.generation;
+    if (this.options.resourceTiming !== false && typeof PerformanceObserver !== 'undefined') {
+      try {
+        let captured = 0;
+        const resources = new PerformanceObserver((list) => {
+          if (vitalsGeneration !== this.generation) return;
+          for (const item of list.getEntries()) {
+            const resource = item as PerformanceResourceTiming;
+            if (
+              captured >= 50 ||
+              ['fetch', 'xmlhttprequest', 'beacon'].includes(resource.initiatorType)
+            )
+              continue;
+            let path: string;
+            try {
+              path = new URL(resource.name, location.href).pathname;
+            } catch {
+              continue;
+            }
+            captured++;
+            this.track(
+              'resource_timing',
+              {
+                path,
+                initiator: resource.initiatorType,
+                duration: Math.round(resource.duration),
+                transferSize: resource.transferSize,
+                encodedSize: resource.encodedBodySize,
+                decodedSize: resource.decodedBodySize,
+              },
+              'performance',
+            );
+          }
+        });
+        resources.observe({ type: 'resource', buffered: true });
+        this.cleanups.push(() => resources.disconnect());
+      } catch {
+        /* Resource timing is optional in older browsers. */
+      }
+    }
     for (const observe of [onCLS, onINP, onLCP, onTTFB]) {
       try {
         observe((metric) => {

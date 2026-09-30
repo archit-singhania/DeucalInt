@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -323,7 +324,12 @@ public class Platform implements WebFluxConfigurer {
     return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
   }
 
-  @ExceptionHandler({ TimeoutException.class, ExecutionException.class, SQLException.class })
+  @ExceptionHandler({
+    TimeoutException.class,
+    ExecutionException.class,
+    SQLException.class,
+    java.io.IOException.class,
+  })
   ResponseEntity<Map<String, String>> unavailable(Exception e) {
     return ResponseEntity.status(503).body(
       Map.of("error", "Dependency unavailable; retry with the same event IDs")
@@ -331,19 +337,77 @@ public class Platform implements WebFluxConfigurer {
   }
 
   String clickhouse(String query) throws Exception {
+    return clickhouse(new WarehouseQueries.Query(query, Map.of()));
+  }
+
+  static URI warehouseUri(String base, Map<String, String> parameters) {
+    StringBuilder uri = new StringBuilder(base);
+    for (var parameter : parameters.entrySet()) {
+      uri.append(uri.indexOf("?") >= 0 ? '&' : '?');
+      uri.append("param_").append(URLEncoder.encode(parameter.getKey(), StandardCharsets.UTF_8));
+      uri.append('=').append(URLEncoder.encode(parameter.getValue(), StandardCharsets.UTF_8));
+    }
+    return URI.create(uri.toString());
+  }
+
+  String clickhouse(WarehouseQueries.Query query) throws Exception {
     HttpRequest req = HttpRequest.newBuilder(
-      URI.create(env("CLICKHOUSE_URL", "http://localhost:8123"))
+      warehouseUri(env("CLICKHOUSE_URL", "http://localhost:8123"), query.parameters())
     )
       .timeout(Duration.ofSeconds(15))
       .header("X-ClickHouse-User", env("CLICKHOUSE_USER", "deucalint"))
       .header("X-ClickHouse-Key", env("CLICKHOUSE_PASSWORD", "local-development"))
-      .POST(HttpRequest.BodyPublishers.ofString(query))
+      .POST(HttpRequest.BodyPublishers.ofString(query.sql()))
       .build();
     var response = http.send(req, HttpResponse.BodyHandlers.ofString());
     if (response.statusCode() != 200) throw new java.io.IOException(
       "Warehouse request failed: " + response.statusCode()
     );
     return response.body();
+  }
+
+  @GetMapping("/v1/overview")
+  Mono<JsonNode> overview(
+    @RequestHeader("Authorization") String authorization,
+    @RequestParam(defaultValue = "7") int days,
+    @RequestParam(required = false) String segment
+  ) {
+    if (!ROLE.equals("api")) throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+    return Mono.<JsonNode>fromCallable(() -> {
+      if (segment != null && segment.length() > 8192) throw new IllegalArgumentException(
+        "Segment is too large"
+      );
+      JsonNode ast = null;
+      if (segment != null && !segment.isBlank()) {
+        try {
+          ast = JSON.readTree(segment);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
+          throw new IllegalArgumentException("Invalid segment JSON");
+        }
+      }
+      String project = projectForToken(
+        authorization.replaceFirst("^Bearer ", ""),
+        "analytics:read"
+      );
+      WarehouseQueries queries = new WarehouseQueries(
+        project,
+        days,
+        System.currentTimeMillis(),
+        ast
+      );
+      long started = System.nanoTime();
+      try {
+        return queries.response(
+          project,
+          JSON.readTree(clickhouse(queries.metrics())),
+          JSON.readTree(clickhouse(queries.breakdowns()))
+        );
+      } finally {
+        meters
+          .timer("deucalint.warehouse.overview")
+          .record(System.nanoTime() - started, TimeUnit.NANOSECONDS);
+      }
+    }).subscribeOn(Schedulers.boundedElastic());
   }
 
   @GetMapping("/v1/analytics")

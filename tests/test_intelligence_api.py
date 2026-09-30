@@ -56,6 +56,28 @@ class IntelligenceAPITests(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 400)
 
+    def test_natural_language_synonyms_reach_shared_router(self):
+        for question, tool in [
+            ("Why are requests slow?", "query_performance"),
+            ("Find browser crashes", "query_errors"),
+            ("What changed after the release?", "query_deployments"),
+        ]:
+            r = self.client.post(
+                "/plan",
+                json={"question": question},
+                headers={"Authorization": "Bearer test-only"},
+            )
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.json()["tool"], tool)
+
+    def test_whitespace_question_rejected(self):
+        r = self.client.post(
+            "/plan",
+            json={"question": "   "},
+            headers={"Authorization": "Bearer test-only"},
+        )
+        self.assertEqual(r.status_code, 400)
+
     def test_empty_analysis_is_honest(self):
         r = self.client.post(
             "/analyze",

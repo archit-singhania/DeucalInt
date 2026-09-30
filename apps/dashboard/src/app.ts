@@ -9,11 +9,13 @@ import {
 import { CommonModule } from '@angular/common';
 import { DeucalInt } from '../../../packages/web-sdk/src/index';
 import { IconComponent } from './icon';
+import { GeographyComponent } from './geography';
+import { JourneyFlowComponent } from './journey-flow';
 
 @Component({
   selector: 'di-root',
   standalone: true,
-  imports: [CommonModule, IconComponent],
+  imports: [CommonModule, IconComponent, GeographyComponent, JourneyFlowComponent],
   templateUrl: './app.html',
 })
 export class AppComponent implements OnInit, OnDestroy {
@@ -30,6 +32,7 @@ export class AppComponent implements OnInit, OnDestroy {
       items: [
         ['overview', 'Overview', '◫'],
         ['live', 'Live activity', '◉'],
+        ['events', 'Auto-captured events', 'live'],
         ['investigate', 'Investigations', '✧'],
       ],
     },
@@ -60,6 +63,154 @@ export class AppComponent implements OnInit, OnDestroy {
       ],
     },
   ];
+  skipToContent() {
+    document.getElementById('main-content')?.focus();
+  }
+  currentPassword = '';
+  changedPassword = '';
+  accountBusy = false;
+  deliveries: any[] = [];
+  async changePassword() {
+    this.accountBusy = true;
+    try {
+      await this.api('/api/account/password', {
+        method: 'POST',
+        body: JSON.stringify({
+          currentPassword: this.currentPassword,
+          newPassword: this.changedPassword,
+        }),
+      });
+      this.currentPassword = '';
+      this.changedPassword = '';
+      this.notify('Password updated. Other sessions were signed out.');
+    } catch (e) {
+      this.error = String(e);
+    } finally {
+      this.accountBusy = false;
+    }
+  }
+  async retryDelivery(id: string) {
+    try {
+      this.deliveries = (
+        await this.api('/api/deliveries?project=' + this.project, {
+          method: 'POST',
+          body: JSON.stringify({ id }),
+        })
+      ).deliveries;
+      this.notify('Delivery queued for retry.');
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+  setupStep = 1;
+  setupStatus: any = null;
+  setupBusy = false;
+  websiteUrl = '';
+  installMethod = 'HTML';
+  hasConsent = false;
+  installToken = '';
+  collectorBase = location.origin;
+  catalogue: any = null;
+  eventSearch = '';
+  graph: any = null;
+  journeyAnchor = '';
+  journeyDirection = 'forward';
+  get journeyNames() {
+    return [...new Set<string>((this.detail || []).flatMap((e: any) => [e.from, e.to]))].sort();
+  }
+  retentionMode = 'exact';
+  chartTable = false;
+  showAdvanced = false;
+  get projectName() {
+    return this.projects.find((p) => p.id === this.project)?.name || 'Your product';
+  }
+  get setupToken() {
+    return (
+      this.installToken ||
+      (this.project === 'demo'
+        ? 'pk_demo_deucalint'
+        : this.project === 'sandbox'
+          ? 'pk_sandbox_deucalint'
+          : '')
+    );
+  }
+  get installSnippet() {
+    const safe = (s: string) =>
+      s.replace(
+        /[&<>"']/g,
+        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c,
+      );
+    return (
+      '<script defer src="' +
+      safe(this.collectorBase) +
+      '/ingest.js"\n  data-token="' +
+      safe(this.setupToken || 'YOUR_PUBLIC_TOKEN') +
+      '"\n  data-endpoint="' +
+      safe(this.collectorBase) +
+      '"' +
+      (this.hasConsent ? '\n  data-consent="granted"' : '') +
+      '></script>'
+    );
+  }
+  get eventRows() {
+    return (this.catalogue?.events || []).filter((e: any) =>
+      (e.name + ' ' + e.type).toLowerCase().includes(this.eventSearch.toLowerCase()),
+    );
+  }
+  async copySnippet() {
+    try {
+      await navigator.clipboard.writeText(this.installSnippet);
+      this.notify('Installation snippet copied.');
+    } catch {
+      this.notify('Select and copy the snippet below. Clipboard access is unavailable.');
+    }
+  }
+  async checkConnection() {
+    this.setupBusy = true;
+    try {
+      this.setupStatus = await this.api('/api/setup?project=' + this.project);
+      if (this.setupStatus.websiteUrl) this.websiteUrl = this.setupStatus.websiteUrl;
+      this.notify(
+        this.setupStatus.connected
+          ? 'Events are arriving. Your connection is working.'
+          : 'No events yet. Open your site after installing the snippet and granting consent.',
+      );
+    } catch (e) {
+      this.error = String(e);
+    } finally {
+      this.setupBusy = false;
+    }
+  }
+  async saveWebsite() {
+    try {
+      await this.api('/api/settings?project=' + this.project, {
+        method: 'POST',
+        body: JSON.stringify({ websiteUrl: this.websiteUrl }),
+      });
+      this.setupStep = 2;
+      this.notify('Site saved. Next, add your installation snippet.');
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+  selectCountry(code: string) {
+    this.rules = this.rules.filter((r) => r.dimension !== 'country');
+    this.rules.push({ dimension: 'country', operator: 'eq', value: code });
+    void this.filter();
+  }
+  eventFunnel(name: string) {
+    this.funnelSteps = 'page_view, ' + name;
+    this.navigate('funnels');
+  }
+  get overviewHeadline() {
+    const d = this.delta('conversion');
+    return d === '—'
+      ? 'Your product story starts with the first signal.'
+      : 'Conversion is ' +
+          (Number(d) >= 0 ? 'up ' : 'down ') +
+          Math.abs(Number(d)) +
+          '% from the previous period.';
+  }
   view = location.hash.slice(1) || 'overview';
   project = 'demo';
   days = 7;
@@ -350,6 +501,9 @@ export class AppComponent implements OnInit, OnDestroy {
       this.role = 'owner';
       this.demoToken = p.token;
       this.rotatedToken = p.token;
+      this.installToken = p.token;
+      this.setupStep = 1;
+      this.websiteUrl = '';
       this.newProjectName = '';
       this.rules = [];
       this.browser = 'All browsers';
@@ -378,7 +532,8 @@ export class AppComponent implements OnInit, OnDestroy {
   get subtitle() {
     return (
       {
-        overview: 'Every signal. One clear picture.',
+        overview: 'A clear view of your product. A confident next move.',
+        events: 'Useful signals, captured automatically. No event definitions required.',
         live: 'Your product, as it happens.',
         investigate: 'Go from a change in metrics to a story backed by evidence.',
         funnels: 'Find the moments that move people forward.',
@@ -486,9 +641,20 @@ export class AppComponent implements OnInit, OnDestroy {
   }
   async changeProject(event: Event) {
     this.project = this.value(event);
+    this.installToken = '';
+    this.rotatedToken = '';
+    this.setupStatus = null;
+    this.websiteUrl = '';
+    this.setupStep = 1;
     this.role = this.projects.find((p) => p.id === this.project)?.role || this.role;
     this.rules = [];
-    this.demoToken = this.project === 'demo' ? 'pk_demo_deucalint' : 'pk_sandbox_deucalint';
+    this.demoToken =
+      this.project === 'demo'
+        ? 'pk_demo_deucalint'
+        : this.project === 'sandbox'
+          ? 'pk_sandbox_deucalint'
+          : '';
+    this.browser = 'All browsers';
     this.sdk?.destroy();
     this.consent = false;
     this.investigation = null;
@@ -540,6 +706,7 @@ export class AppComponent implements OnInit, OnDestroy {
           settings: 'settings',
           demo: '',
           onboarding: '',
+          events: '',
           team: 'members',
         } as Record<string, string>
       )[this.view];
@@ -552,14 +719,35 @@ export class AppComponent implements OnInit, OnDestroy {
               this.funnelOrdered +
               '&window=' +
               this.funnelWindow
-            : '';
+            : endpoint === 'retention'
+              ? '&mode=' + this.retentionMode
+              : '';
         const detail = await this.api('/api/' + endpoint + '?' + this.query + suffix);
         if (id !== this.requestId) return;
         this.detail = detail;
         if (endpoint === 'settings') this.retentionDays = this.detail.retention;
       }
-      if (this.view === 'alerts')
+      if (this.view === 'onboarding') {
+        this.setupStatus = await this.api('/api/setup?project=' + this.project);
+        this.websiteUrl = this.setupStatus.websiteUrl || '';
+        this.collectorBase = this.setupStatus.collectorEndpoint || location.origin;
+      }
+      if (this.view === 'events')
+        this.catalogue = await this.api('/api/events/catalog?' + this.query);
+      if (this.view === 'journeys')
+        this.graph = await this.api(
+          '/api/journey-graph?' +
+            this.query +
+            '&direction=' +
+            this.journeyDirection +
+            (this.journeyAnchor ? '&anchor=' + encodeURIComponent(this.journeyAnchor) : ''),
+        );
+      if (this.view === 'alerts') {
         this.notifications = await this.api('/api/notifications?' + this.query);
+        this.deliveries = this.canManage
+          ? (await this.api('/api/deliveries?project=' + this.project)).deliveries
+          : [];
+      }
       this.reports = await this.api('/api/reports?' + this.query);
       if (this.view === 'overview' || this.view === 'investigate') {
         const insights = await this.api('/api/insights?' + this.query);
@@ -629,7 +817,7 @@ export class AppComponent implements OnInit, OnDestroy {
           const start = (sum / total) * 100;
           sum += r.count;
           return (
-            ['#7c66e9', '#b1a3f5', '#51b6a4', '#dce1ef'][i % 4] +
+            ['#147d78', '#8cb8aa', '#a2b4e7', '#dce1ef'][i % 4] +
             ' ' +
             start +
             '% ' +
@@ -752,6 +940,7 @@ export class AppComponent implements OnInit, OnDestroy {
       return;
     const data = await this.api('/api/token?' + this.query, { method: 'POST', body: '{}' });
     this.rotatedToken = data.token;
+    this.installToken = data.token;
     this.demoToken = data.token;
     this.notify('Token rotated. Copy it now.');
   }
@@ -786,8 +975,12 @@ export class AppComponent implements OnInit, OnDestroy {
         }),
       });
       this.notify('Report saved.');
-      if (this.view === 'alerts')
+      if (this.view === 'alerts') {
         this.notifications = await this.api('/api/notifications?' + this.query);
+        this.deliveries = this.canManage
+          ? (await this.api('/api/deliveries?project=' + this.project)).deliveries
+          : [];
+      }
       this.reports = await this.api('/api/reports?' + this.query);
     } catch (e) {
       this.error = String(e);
