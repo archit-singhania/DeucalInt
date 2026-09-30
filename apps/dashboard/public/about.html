@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>DeucalInt — The story behind your product</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #f8f7fc;
+        color: #383249;
+        font:
+          16px/1.7 system-ui,
+          sans-serif;
+      }
+      main,
+      nav,
+      footer {
+        max-width: 1100px;
+        margin: auto;
+        padding: 30px;
+      }
+      nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      a {
+        color: #7760c8;
+        text-decoration: none;
+      }
+      .brand {
+        font-size: 23px;
+        font-weight: 750;
+        letter-spacing: -1px;
+      }
+      .brand span {
+        display: inline-grid;
+        place-items: center;
+        background: #8b72d3;
+        border-radius: 10px;
+        color: white;
+        width: 35px;
+        height: 39px;
+        margin-right: 10px;
+      }
+      .pill {
+        font-size: 11px;
+        border: 1px solid #e1d9ee;
+        padding: 5px 10px;
+        border-radius: 20px;
+        color: #9b88b4;
+      }
+      .hero {
+        text-align: center;
+        padding: 65px 0 70px;
+      }
+      .eyebrow {
+        font-size: 10px;
+        letter-spacing: 3px;
+        color: #a08ab8;
+      }
+      h1 {
+        font-size: clamp(42px, 6vw, 76px);
+        line-height: 1.09;
+        font-weight: 650;
+        letter-spacing: -3px;
+        margin: 28px 0;
+        color: #69577e;
+      }
+      h1 em {
+        font-style: normal;
+        color: #9a7ac9;
+      }
+      .hero p {
+        max-width: 650px;
+        margin: 25px auto;
+        color: #a191af;
+        font-size: 17px;
+      }
+      .button {
+        display: inline-block;
+        background: #8267c5;
+        color: white;
+        padding: 12px 23px;
+        border-radius: 8px;
+        margin: 16px 6px;
+        font-size: 13px;
+      }
+      .secondary {
+        background: white;
+        border: 1px solid #e4ddeb;
+        color: #9f8aae;
+      }
+      .diagram {
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+        border: 1px solid #e8e0f0;
+        background: white;
+        border-radius: 15px;
+        padding: 35px;
+        margin-bottom: 50px;
+      }
+      .node {
+        background: #f5f1fb;
+        border: 1px solid #e8def3;
+        padding: 17px 24px;
+        border-radius: 8px;
+        color: #9b84b5;
+        font-size: 12px;
+      }
+      .arrow {
+        color: #c2b4d3;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+      .card {
+        background: #fff;
+        border: 1px solid #e8e2ef;
+        border-radius: 10px;
+        padding: 25px;
+      }
+      .card b {
+        color: #8f78a8;
+        font-size: 13px;
+      }
+      .card p {
+        color: #aa9cb8;
+        font-size: 12px;
+      }
+      .card .num {
+        font-size: 10px;
+        letter-spacing: 2px;
+        color: #c3b5d1;
+        display: block;
+        margin-bottom: 18px;
+      }
+      .note {
+        background: #f0edf6;
+        border: 1px solid #e4dcec;
+        border-radius: 10px;
+        padding: 25px;
+        margin-top: 35px;
+        color: #9d8aad;
+        font-size: 12px;
+      }
+      footer {
+        font-size: 11px;
+        color: #b2a6bf;
+        border-top: 1px solid #e9e2ef;
+        margin-top: 50px;
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+      }
+      @media (max-width: 700px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+        .hero {
+          padding: 35px 0;
+        }
+        .hero p {
+          font-size: 14px;
+        }
+        .diagram {
+          padding: 20px;
+        }
+        .node {
+          padding: 12px;
+        }
+        footer {
+          display: block;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <a class="brand" href="/"><span>D</span>DeucalInt</a
+      ><span class="pill">Open engineering · Local-first demo</span>
+    </nav>
+    <main>
+      <section class="hero">
+        <span class="eyebrow">PRODUCT INTELLIGENCE, CONNECTED.</span>
+        <h1>Every metric has a story.<br /><em>Understand yours.</em></h1>
+        <p>
+          An AI-powered product intelligence platform that explains what changed, why it changed,
+          and what evidence caused it.
+        </p>
+        <a class="button" href="/">Explore the workspace →</a
+        ><a class="button secondary" href="/#demo">Try the instrumented store</a>
+      </section>
+      <div class="diagram">
+        <span class="node">Product behavior</span><span class="arrow">+</span
+        ><span class="node">Technical telemetry</span><span class="arrow">+</span
+        ><span class="node">Deployment history</span><span class="arrow">→</span
+        ><span class="node">Evidence-backed explanations</span>
+      </div>
+      <section class="grid">
+        <article class="card">
+          <span class="num">01 / UNDERSTAND</span><b>Know what changed.</b>
+          <p>
+            Explore sessions, funnels, cohort retention, journeys, and experiment results. Filter
+            the evidence to understand who is affected.
+          </p>
+        </article>
+        <article class="card">
+          <span class="num">02 / INVESTIGATE</span><b>Connect the signals.</b>
+          <p>
+            Compare conversion with errors, latency, and release history. Inspect every evidence
+            card and export the underlying events.
+          </p>
+        </article>
+        <article class="card">
+          <span class="num">03 / VERIFY</span><b>Trust the boundaries.</b>
+          <p>
+            Consent-first collection, credential scrubbing, masked geometric replay, project
+            isolation, durable batches, and explicit delivery guarantees.
+          </p>
+        </article>
+      </section>
+      <div class="note">
+        <b>Built transparently.</b> This is a working development platform, not a claim of
+        production readiness. The local workspace uses a deterministic evidence engine and an
+        explicitly labeled synthetic dataset. Optional distributed and Ollama profiles have separate
+        setup and validation requirements. Correlated contributors are not proven causes.
+      </div>
+    </main>
+    <footer>
+      <span>DeucalInt — Real-Time Behavioral Intelligence & Product Observability Platform</span
+      ><a href="/">Open workspace ↗</a>
+    </footer>
+  </body>
+</html>

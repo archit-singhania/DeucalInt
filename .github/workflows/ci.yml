@@ -11,6 +11,9 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.13'}
       - run: npm ci
+      - run: pip install -r requirements-dev.txt
+      - run: npm run format:check
+      - run: python -m black --check apps tests benchmarks
       - run: npm run check
       - run: python -m unittest discover -s tests -p 'test_*.py' -v
       - run: npx playwright install --with-deps chromium
@@ -26,4 +29,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: '21', cache: maven}
-      - run: mvn -B -f apps/platform/pom.xml verify
+      - run: mvn -B verify

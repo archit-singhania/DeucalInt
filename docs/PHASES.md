@@ -1,0 +1,46 @@
+# Phase-by-phase delivery report
+
+This report follows the **recommended development order (phases 0–29)** in the supplied roadmap, which differs from the earlier feature-section numbering. “Local” means the feature was implemented against the runnable SQLite profile. It does not imply production scale or distributed parity.
+
+| Phase | Delivered | Status / remaining scope |
+|---|---|---|
+| 0 · Specification | Versioned event JSON schema, safe segment AST, batch contract, OpenAPI, tenancy and privacy boundaries | Implemented v1. Runtime/schema conformance should be expanded as the protocol evolves. |
+| 1 · Monorepo + infrastructure | Angular/Java/Python monorepo, local container, distributed Compose, persistent volumes and health probes | Files supplied; Docker not available for container execution here. |
+| 2 · Web SDK | Consent + DNT, SPA/page/click/scroll/form capture, fetch/XHR/errors, bounded local queue, batching, beacon, retry, immutable delivery IDs | Local delivery tested. Compression, cross-tab identity/session coordination, complete browser matrix and resource timing remain. |
+| 3 · Collector | Spring WebFlux, scoped token lookup in PostgreSQL, origin/rate/size/schema checks, scrub before broker, acknowledged 202 | Java contract tests pass. Broker-backed HTTP execution needs Docker. Blocking metadata/producer setup is isolated on boundedElastic. |
+| 4 · Streaming | Kafka-compatible producer, partition key, manual consumer commits after warehouse insertion, retry, deadletter, restart on prolonged outage | Code built. Testcontainers and full distributed smoke test supplied, not executed here. Dedicated sessionizer, distributed presence and replay workers remain. |
+| 5 · Warehouse | ClickHouse ReplacingMergeTree events, TTL, unique-event minute aggregate states, materialized view, exact FINAL queries | SQL supplied. Real ClickHouse validation and additional hour/day dimension rollups remain. |
+| 6 · Core analytics | Visitor/session/page/conversion/error/revenue/latency metrics, prior-window comparison, dimensions, safe segments, export | Local tested. Distributed adapter retrieves bounded events; large-scale server-side analytical SQL remains. |
+| 7 · Angular dashboard | Branded responsive application, 12 working sections, loading/empty/error states, evidence modal, desktop/mobile verification | Implemented. JIT compiler increases initial bundle; AOT/lazy route optimization remains. |
+| 8 · Realtime | Authenticated reconnecting SSE, active visitors, recent event stream, project changes | Local browser-tested. Cross-node Valkey presence, event cursors and WebSocket transport remain. |
+| 9 · Funnels + segments | Ordered or entry-anchored unordered steps, time window, drop-off, median completion, browser segments, saved segment reports | Local tested. Rich visual multi-condition builder and side-by-side comparisons remain. |
+| 10 · Retention + cohorts | Exact-day D0/1/3/7/14/30 retention, first-observed weekly cohorts, unmatured cells | Local tested. Identity stitching, rolling retention, full-history acquisition cohorts and cohort builder remain. |
+| 11 · Journeys | Session-ordered behavioral transition graph/list with edge frequency | Implemented locally. Full Sankey exploration, churn cohorts and automated loop/dead-end diagnosis remain. |
+| 12 · Session replay | Opt-in masked geometric snapshots, debounced mutations, scrubbed transport, player/timeline/play/scrub | Local implementation. This is **not pixel-perfect DOM replay**; MinIO chunks, complete DOM mutation playback and rage/dead-click detection remain. |
+| 13 · Errors + RUM | JS/unhandled promise errors, fetch/XHR, performance observations, grouped errors, request p95 and vital p75 | Implemented. CLS entries and interaction durations are labeled proxies, not full official Web Vitals. Source maps, resource timing and error fingerprint depth remain. |
+| 14 · Deployment correlation | Release events, release timeline, baseline/current evidence and cohort comparison | Implemented as temporal evidence. Exact regression-onset delay and change-point matching remain. |
+| 15 · Anomaly detection | Rolling median/MAD, robust z score, minimum samples, reproducible synthetic precision/recall/F1 evaluation | Implemented baseline. EWMA/seasonality/Isolation Forest comparison, real labels and detection-delay benchmarking remain. |
+| 16 · Root-cause engine | Segment impact ranking, conversion/error/latency evidence, sample counts, overlap/correlation caveats | Implemented baseline. Segment significance and multivariate attribution remain; no causal claims are made. |
+| 17 · AI analytics agent | Named tool planner, bounded questions, allowlisted AST, optional Ollama structured output, permission-checked data, evidence and execution trace | Deterministic mode works. FastAPI authorization and deterministic planning contracts tested; actual model integration and multi-step LangGraph orchestration remain unverified/not implemented respectively. |
+| 18 · Experiments | Post-exposure conversion, exclusion of cross-exposed visitors, Wilson intervals, two-proportion p-value, minimum-sample notice | Local tested. Sequential testing and revenue/retention effects remain. |
+| 19 · Alerts | Persistent threshold rules, last-day evaluation, triggered state, delete | In-app implemented. Scheduled rule engine, cooldown/deduplication, email/webhook channels and delivery retries remain. |
+| 20 · Multi-tenancy + RBAC | Every query scoped, separate ingestion/read credentials, owner/viewer restrictions, demo/sandbox separation | Local boundary tested. Org/user provisioning, five-role policy, OIDC/JWT, multi-org sessions and membership management remain. |
+| 21 · Privacy + lifecycle | Consent/DNT, scrubbed secrets/URLs, geometry-only replay, local TTL, local session/visitor erasure, inbox purge, tombstones, export, token rotation | Local tested. Distributed lifecycle actions return 501. Project deletion and cross-store erasure/backup policy remain. |
+| 22 · Observability | Local metrics, Java Micrometer/Prometheus, readiness, Grafana data source and panels | Metrics implemented; monitoring containers unverified. OpenTelemetry traces, Loki logs, broker lag and full operational SLOs remain. |
+| 23 · Load + chaos | k6 script, paced synthetic generator, dependency outage script, local dedup/poison/out-of-order tests, local measured benchmark | Local correctness and algorithm measurements run. Distributed load/outage tests and throughput claims await Docker. |
+| 24 · CI/CD | GitHub Actions builds, unit/API/browser/SDK/Java tests, audit, Docker build | Workflow supplied; hosted GitHub run not performed. Registry publishing, deploy automation, container scanning and performance baselines remain. |
+| 25 · Kubernetes | Non-root single-replica demo deployment, PVC, probes, resource limits, Secret references and service | Manifest supplied, not applied. Distributed StatefulSets/operators, HA, ingress/TLS, network policy and production rollout remain. |
+| 26 · More SDKs | Node SDK with retry and Java SDK with acknowledged flush/retry-stable IDs | Node and Java delivery tests pass. Registry publication, richer APIs and durable server-side queues remain. |
+| 27 · Public demo | Instrumented commerce store, consent toggle, checkout failure simulation, landing page, local runnable app | Local demo works. No public hosting has been created. Additional slow/LCP fault toggles and coordinated traffic scenarios remain. |
+| 28 · Benchmark + architecture | Actual local measurements, synthetic detector evaluation, architecture documentation, ADRs, API contracts, threat model | Delivered for current implementation. Distributed benchmarks and operational findings require infrastructure execution. |
+| 29 · Portfolio + video | Local portfolio page, screenshot/video recorder, walkthrough assets | Local artifacts delivered. Public URL, narrated/edit-ready video and published portfolio remain. |
+
+## Priority completion path
+
+1. Run Docker Compose and the distributed smoke test; fix any integration findings before claiming the full stack verified.
+2. Replace development authentication with OIDC/JWT and real organization membership. Move remaining dashboard configuration from SQLite to PostgreSQL.
+3. Push analytics into parameterized ClickHouse queries and connect lifecycle operations, replay storage and presence to their distributed stores.
+4. Add official Web Vitals, complete replay, alert delivery and statistically stronger investigations.
+5. Run load/chaos/model evaluations, add SLO-driven CI gates, then publish and harden deployment.
+
+The requested full production roadmap is **not entirely complete**. All phases have tracked implementation work or deployment/test artifacts, but the remaining items above should not be represented as shipped features.

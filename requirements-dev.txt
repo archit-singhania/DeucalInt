@@ -1,0 +1,4 @@
+-r apps/ai-engine/requirements.txt
+httpx==0.28.1
+PyYAML==6.0.3
+black==25.12.0
