@@ -31,12 +31,18 @@
           [value]="role"
           (change)="
             role = value($event);
+            username = role;
             password = role === 'owner' ? 'deucalint-local' : 'deucalint-viewer'
           "
         >
           <option value="owner">Owner · full access</option>
           <option value="viewer">Viewer · read only</option>
         </select></label
+      ><label
+        >Username<input
+          [value]="username"
+          (input)="username = value($event)"
+          autocomplete="username" /></label
       ><label
         >Local workspace password<input
           type="password"
@@ -72,8 +78,13 @@
         <div class="nav-group">
           <span class="nav-label">{{ group.group }}</span>
           @for (item of group.items; track item[0]) {
-            <a [href]="'#' + item[0]" [class.active]="view === item[0]" (click)="navigate(item[0])"
-              ><span class="nav-icon">{{ item[2] }}</span
+            <a
+              [href]="'#' + item[0]"
+              [class.active]="view === item[0]"
+              [attr.aria-current]="view === item[0] ? 'page' : null"
+              (click)="navigate(item[0])"
+              ><span class="nav-icon"
+                ><di-icon [name]="item[0] === 'team' ? 'users' : item[0]" /></span
               >{{ item[1] }}
               @if (item[0] === 'live') {
                 <i class="tiny-dot"></i>
@@ -107,7 +118,11 @@
         Workspace <span>/</span><b>{{ title }}</b>
       </div>
       <div class="top-actions">
-        <span class="keycap">LOCAL</span
+        <button class="command-trigger" (click)="openCommand()">
+          <di-icon name="search" /> Search workspace <kbd>Ctrl K</kbd></button
+        ><button class="icon-button" aria-label="Toggle color theme" (click)="toggleTheme()">
+          <di-icon [name]="dark ? 'sun' : 'moon'" /></button
+        ><span class="keycap">{{ profile }}</span
         ><button
           class="icon-button"
           aria-label="Open project settings"
@@ -117,7 +132,8 @@
         ><span class="avatar small">DI</span>
       </div>
     </header>
-    <main class="content">
+    <main class="content" id="main-content">
+      <a class="skip-link" href="#main-content">Skip to content</a>
       <div class="page-heading">
         <div>
           <div class="eyebrow">YOUR PRODUCT, UNDERSTOOD</div>
@@ -177,6 +193,45 @@
           </button></span
         >
       </div>
+      <div class="segment-chips">
+        <button (click)="openSegments()"><di-icon name="filter" /> Build segment</button>
+        @for (rule of rules; track $index) {
+          <button (click)="removeRule($index)">
+            {{ rule.dimension }} {{ rule.operator }} {{ rule.value }} ×
+          </button>
+        }
+      </div>
+      @if (showSegments) {
+        <section class="panel segment-builder">
+          <h3>Include events matching all rules</h3>
+          @for (rule of draftRules; track $index) {
+            <div class="rule-row">
+              <select
+                aria-label="Segment dimension"
+                [value]="rule.dimension"
+                (change)="rule.dimension = value($event)"
+              >
+                @for (d of ['browser', 'device', 'country', 'path']; track d) {
+                  <option [value]="d">{{ d }}</option>
+                }</select
+              ><select
+                aria-label="Segment operator"
+                [value]="rule.operator"
+                (change)="rule.operator = value($event)"
+              >
+                <option value="eq">equals</option>
+                <option value="neq">does not equal</option></select
+              ><input
+                aria-label="Segment value"
+                [value]="rule.value"
+                (input)="rule.value = value($event)"
+              /><button (click)="draftRules.splice($index, 1)">Remove</button>
+            </div>
+          }
+          <button (click)="addRule()">Add rule</button
+          ><button class="primary" (click)="applySegments()">Apply segment</button>
+        </section>
+      }
       @if (error) {
         <div class="error" role="alert">
           {{ error }} <button (click)="refresh()">Try again</button>
@@ -189,7 +244,114 @@
         </div>
       }
       @if (!loading && data) {
+        @if (view === 'onboarding') {
+          <section class="panel onboarding-panel">
+            <span class="eyebrow">CONNECT YOUR PRODUCT</span>
+            <h2>Your first signal starts here.</h2>
+            <p>
+              Create a project, copy its public ingestion token, and initialize the browser SDK with
+              consent enabled.
+            </p>
+            @if (canManage) {
+              <label
+                >Project name<input
+                  [value]="newProjectName"
+                  (input)="newProjectName = value($event)"
+                  placeholder="My product" /></label
+              ><button class="primary" (click)="createProject()">Create project</button>
+            }
+            @if (rotatedToken) {
+              <pre>{{ rotatedToken }}</pre>
+              <p>Copy this token now. It is only shown once.</p>
+            }
+            <ol>
+              <li>Build the SDK with npm run sdk:build.</li>
+              <li>Serve dist/sdk.js from your application.</li>
+              <li>Initialize with your collector URL and public project token after consent.</li>
+              <li>Open Live activity to verify the first event.</li>
+            </ol>
+            <button (click)="navigate('demo')">Test with the demo store</button
+            ><button (click)="navigate('live')">View incoming events</button>
+          </section>
+        }
+        @if (view === 'team') {
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h3>Project members</h3>
+                <p>Access is checked independently for every project.</p>
+              </div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Username</th>
+                  <th>Role</th>
+                  <th>Access</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (member of detail || []; track member.id) {
+                  <tr>
+                    <td>{{ member.username }}</td>
+                    <td>{{ member.role }}</td>
+                    <td>
+                      @if (canManage && member.role !== 'owner') {
+                        <button (click)="removeMember(member.id)">Remove access</button>
+                      } @else {
+                        Protected
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+            @if (canManage) {
+              <div class="segment-builder">
+                <h3>Create member account</h3>
+                <label
+                  >Username<input
+                    [value]="newUsername"
+                    (input)="newUsername = value($event)" /></label
+                ><label
+                  >Password · at least 12 characters<input
+                    type="password"
+                    autocomplete="new-password"
+                    [value]="newPassword"
+                    (input)="newPassword = value($event)" /></label
+                ><select
+                  aria-label="New member role"
+                  [value]="newRole"
+                  (change)="newRole = value($event)"
+                >
+                  @for (r of ['admin', 'developer', 'analyst', 'viewer']; track r) {
+                    <option [value]="r">{{ r }}</option>
+                  }</select
+                ><button class="primary" (click)="createMember()">Create member</button>
+              </div>
+            }
+          </section>
+        }
+        @if (view === 'investigate' && history.length) {
+          <section class="panel investigation-history">
+            <h3>Recent investigations</h3>
+            @for (item of history; track item.id) {
+              <button (click)="restoreInvestigation(item)">
+                {{ item.question }} <small>{{ item.createdAt | date: 'short' }}</small>
+              </button>
+            }
+          </section>
+        }
+
         @if (view === 'overview') {
+          <div class="health-strip">
+            <span
+              ><i class="tiny-dot"></i
+              >{{ connected ? 'Live feed connected' : 'Live feed reconnecting' }}</span
+            ><span>{{ number(data.metrics.sessions) }} sessions in scope</span
+            ><span>{{ number(data.metrics.errors) }} captured errors</span
+            ><span>{{ data.updatedAt | date: 'shortTime' : 'UTC' }} UTC data refresh</span>
+          </div>
           <section class="insight-banner">
             <span class="insight-icon">✧</span>
             <div>
@@ -247,7 +409,17 @@
                   <h3>Traffic & engagement</h3>
                   <p>A pulse on your product’s activity</p>
                 </div>
-                <div class="legend"><i></i>Sessions <i class="mint"></i>Page views</div>
+                <div class="legend">
+                  <i></i>Sessions <i class="mint"></i>Page views
+                  <label
+                    ><input
+                      type="checkbox"
+                      [checked]="comparePrevious"
+                      (change)="comparePrevious = !comparePrevious"
+                    />
+                    Previous period</label
+                  >
+                </div>
               </div>
               <div class="chart">
                 <div class="chart-y">
@@ -257,7 +429,11 @@
                 <svg
                   viewBox="0 0 780 220"
                   role="img"
-                  aria-label="Sessions and page views over the selected period"
+                  tabindex="0"
+                  (mousemove)="chartMove($event)"
+                  (keydown)="chartKey($event)"
+                  (click)="openBucket()"
+                  aria-label="Sessions and page views. Use arrow keys to explore, Enter for details."
                   preserveAspectRatio="none"
                 >
                   <defs>
@@ -274,6 +450,15 @@
                       [attr.y2]="y"
                       stroke="#ebedf3"
                       stroke-dasharray="4 5"
+                    />
+                  }
+                  @if (comparePrevious) {
+                    <path
+                      [attr.d]="previousLine()"
+                      fill="none"
+                      stroke="#a59abf"
+                      stroke-width="2"
+                      stroke-dasharray="6 5"
                     />
                   }
                   <path [attr.d]="area()" fill="url(#chart-fill)" />
@@ -293,6 +478,12 @@
                   />
                 </svg>
               </div>
+              @if (hoverBucket) {
+                <div class="chart-tooltip" role="status">
+                  {{ hoverBucket.label }} · {{ hoverBucket.sessions }} sessions ·
+                  {{ hoverBucket.pageviews }} page views · {{ hoverBucket.conversion }}% conversion
+                </div>
+              }
               <div class="chart-x">
                 @for (item of chartLabels(); track $index) {
                   <span>{{ item.label }}</span>
@@ -452,7 +643,7 @@
                 ];
                 track q
               ) {
-                <button (click)="question = q; investigate()" [disabled]="role === 'viewer'">
+                <button (click)="question = q; investigate()" [disabled]="!canEditReports">
                   {{ q }}
                 </button>
               }
@@ -478,7 +669,7 @@
                 <p>{{ investigation.caveat }}</p>
                 <div class="evidence-grid">
                   @for (e of investigation.evidence; track e.id) {
-                    <button class="evidence-card" (click)="evidence = e">
+                    <button class="evidence-card" (click)="openEvidence(e)">
                       <small>{{ e.id }} ↗</small><b>{{ e.title }}</b
                       ><span
                         >{{ e.before }}{{ e.unit === '%' ? '%' : '' }} <i>→</i> {{ e.after
@@ -530,6 +721,21 @@
                 >{{ detail.steps[detail.steps.length - 1]?.rate }}% completed</span
               >
             </div>
+            <div class="funnel-step-editor">
+              @for (step of steps; track $index) {
+                <div class="editable-step">
+                  <b>{{ $index + 1 }}</b
+                  ><input
+                    aria-label="Funnel step"
+                    [value]="step"
+                    (change)="updateStep($index, $event)"
+                  /><button aria-label="Move step earlier" (click)="moveStep($index, -1)">↑</button
+                  ><button aria-label="Move step later" (click)="moveStep($index, 1)">↓</button
+                  ><button aria-label="Remove step" (click)="removeStep($index)">×</button>
+                </div>
+              }
+              <button (click)="addStep()">Add step</button>
+            </div>
             <div class="funnel-editor">
               <label
                 >Event steps, separated by commas<input
@@ -577,7 +783,7 @@
               placeholder="Report name"
               aria-label="Report name"
               (input)="reportName = value($event)"
-            /><button (click)="saveReport()" [disabled]="role === 'viewer'">Save segment</button
+            /><button (click)="saveReport()" [disabled]="!canEditReports">Save segment</button
             ><select aria-label="Saved reports" (change)="useReport($event)">
               <option value="">Open saved segment</option>
               @for (r of reports; track r.id) {
@@ -768,7 +974,7 @@
             @for (
               v of [
                 ['lcp', 'Largest contentful paint', 'ms'],
-                ['inp', 'Interaction duration proxy', 'ms'],
+                ['inp', 'Interaction to next paint', 'ms'],
                 ['cls', 'Layout shift entries', ''],
                 ['ttfb', 'Time to first byte', 'ms'],
               ];
@@ -858,11 +1064,23 @@
                   <option value="latency">API p95 (ms) &gt;</option>
                 </select></label
               ><label
+                >Minimum sessions<input
+                  type="number"
+                  min="1"
+                  [value]="alertMinimum"
+                  (input)="alertMinimum = +value($event)" /></label
+              ><label
+                >Cooldown minutes<input
+                  type="number"
+                  min="1"
+                  [value]="alertCooldown"
+                  (input)="alertCooldown = +value($event)" /></label
+              ><label
                 >Threshold<input
                   type="number"
                   [value]="threshold"
                   (input)="threshold = +value($event)" /></label
-              ><button class="primary" (click)="saveAlert()" [disabled]="role === 'viewer'">
+              ><button class="primary" (click)="saveAlert()" [disabled]="!canEditReports">
                 ＋ Create alert
               </button>
             </div>
@@ -872,12 +1090,36 @@
                 ><b>{{ a.metric }}</b
                 ><span>Threshold {{ a.threshold }} · Current {{ a.current }}</span
                 ><span class="tag" [class.danger]="a.triggered">{{
-                  a.triggered ? 'Triggered' : 'Healthy'
+                  a.insufficientSample ? 'Awaiting sample' : a.triggered ? 'Triggered' : 'Healthy'
                 }}</span
-                ><button (click)="removeAlert(a.id)" [disabled]="role === 'viewer'">Remove</button>
+                ><button (click)="removeAlert(a.id)" [disabled]="!canEditReports">Remove</button>
               </div>
             } @empty {
               <p class="empty">Create your first alert to keep a watch on important metrics.</p>
+            }
+          </section>
+        }
+        @if (view === 'alerts') {
+          <section class="panel segment-builder">
+            <h3>Notification inbox</h3>
+            <p>
+              Local rules evaluate every minute over the last 24 hours. Notifications persist for 90
+              days. Distributed scheduling and external delivery are not enabled.
+            </p>
+            @for (n of notifications; track n.id) {
+              <div class="list-row">
+                <b>{{ n.metric }}: {{ n.value }}</b
+                ><span>{{ n.sessions }} sessions · {{ n.createdAt | date: 'short' }}</span>
+                @if (n.acknowledged) {
+                  <span class="tag">Acknowledged</span>
+                } @else {
+                  <button [disabled]="!canEditReports" (click)="acknowledgeAlert(n.id)">
+                    Acknowledge
+                  </button>
+                }
+              </div>
+            } @empty {
+              <p>No notifications yet.</p>
             }
           </section>
         }
@@ -899,7 +1141,7 @@
                     <option [value]="d">{{ d }} days</option>
                   }
                 </select></label
-              ><button class="primary" (click)="saveSettings()" [disabled]="role === 'viewer'">
+              ><button class="primary" (click)="saveSettings()" [disabled]="!canManage">
                 Save policy
               </button>
             </section>
@@ -917,7 +1159,7 @@ analytics.init(&#123;
   consent: true
 &#125;);</pre
               >
-              <button (click)="rotate()" [disabled]="role === 'viewer'">Rotate public token</button>
+              <button (click)="rotate()" [disabled]="!canManage">Rotate public token</button>
               @if (rotatedToken) {
                 <code class="block">{{ rotatedToken }}</code>
               }
@@ -946,13 +1188,22 @@ analytics.init(&#123;
                   (input)="deletionValue = value($event)"
                 />
               </div>
-              <button class="danger-button" (click)="deleteData()" [disabled]="role === 'viewer'">
+              <button class="danger-button" (click)="deleteData()" [disabled]="!canManage">
                 Delete matching data
               </button>
             </section>
           </div>
         }
         @if (view === 'demo') {
+          <div class="segment-chips">
+            <label
+              ><input type="checkbox" [checked]="slowApi" (change)="slowApi = !slowApi" /> Simulate
+              slow checkout</label
+            ><label
+              ><input type="checkbox" [checked]="highLcp" (change)="highLcp = !highLcp" /> Emit
+              synthetic high LCP</label
+            >
+          </div>
           <div class="demo-controls">
             <div>
               <b>Instrumented demo store</b>
@@ -1002,8 +1253,48 @@ analytics.init(&#123;
   @if (toast) {
     <div class="toast" role="status">✓ {{ toast }}</div>
   }
+  @if (commandOpen) {
+    <div class="modal-backdrop" (click)="closeDialogs()">
+      <section
+        class="modal command-palette"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Search workspace"
+        (click)="$event.stopPropagation()"
+      >
+        <input
+          aria-label="Search pages"
+          placeholder="Where would you like to go?"
+          [value]="commandQuery"
+          (input)="commandQuery = value($event)"
+        />
+        @for (item of commands; track item[0]) {
+          <button (click)="chooseCommand(item[0])">
+            <di-icon [name]="item[0]" />{{ item[1] }}<span>↵</span>
+          </button>
+        }
+        <button (click)="closeDialogs()">Close · Esc</button>
+      </section>
+    </div>
+  }
+  @if (selectedBucket) {
+    <div class="modal-backdrop" (click)="closeDialogs()">
+      <section
+        class="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Chart bucket details"
+        (click)="$event.stopPropagation()"
+      >
+        <button (click)="closeDialogs()">Close</button>
+        <h2>{{ selectedBucket.label }}</h2>
+        <pre>{{ selectedBucket | json }}</pre>
+        <p>Aggregate counts within this bucket. Session counts across buckets may overlap.</p>
+      </section>
+    </div>
+  }
   @if (evidence) {
-    <div class="modal-backdrop" (click)="evidence = null">
+    <div class="modal-backdrop" (click)="closeDialogs()">
       <section
         class="modal"
         role="dialog"
@@ -1013,7 +1304,7 @@ analytics.init(&#123;
       >
         <div class="panel-header">
           <h3>Query evidence · {{ evidence.id }}</h3>
-          <button aria-label="Close evidence" (click)="evidence = null">×</button>
+          <button aria-label="Close evidence" (click)="closeDialogs()">×</button>
         </div>
         <h2>{{ evidence.title }}</h2>
         <p>
@@ -1027,7 +1318,7 @@ analytics.init(&#123;
     </div>
   }
   @if (selectedSession) {
-    <div class="modal-backdrop" (click)="selectedSession = null; playing = false">
+    <div class="modal-backdrop" (click)="closeDialogs()">
       <section
         class="modal replay-modal"
         role="dialog"
@@ -1040,9 +1331,7 @@ analytics.init(&#123;
             <h3>Session explorer</h3>
             <p class="mono">{{ selectedSession.id }}</p>
           </div>
-          <button aria-label="Close replay" (click)="selectedSession = null; playing = false">
-            ×
-          </button>
+          <button aria-label="Close replay" (click)="closeDialogs()">×</button>
         </div>
         <div class="replay-layout">
           <div>

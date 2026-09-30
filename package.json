@@ -4,9 +4,9 @@
   "private": true,
   "description": "DeucalInt — Real-Time Behavioral Intelligence & Product Observability Platform",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
-    "preview": "vite preview --host 127.0.0.1",
+    "dev": "ng serve",
+    "build": "ng build",
+    "preview": "python apps/local-api/server.py",
     "test": "node --test tests/sdk.test.mjs",
     "test:e2e": "playwright test",
     "sdk:build": "esbuild packages/web-sdk/src/index.ts --bundle --format=esm --outfile=dist/sdk.js --minify",
@@ -20,9 +20,13 @@
     "@angular/core": "^20.3.0",
     "@angular/platform-browser": "^20.3.0",
     "rxjs": "^7.8.2",
+    "web-vitals": "^5.3.0",
     "zone.js": "~0.15.1"
   },
   "devDependencies": {
+    "@angular/build": "20.3",
+    "@angular/cli": "20.3",
+    "@angular/compiler-cli": "20.3",
     "@playwright/test": "^1.55.0",
     "esbuild": "^0.25.9",
     "prettier": "^3.6.2",

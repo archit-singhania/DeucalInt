@@ -203,6 +203,105 @@ class PipelineTests(unittest.TestCase):
     def batch(self, es, token="pk_demo_deucalint"):
         return self.request("/v1/batch", {"projectToken": token, "events": es})
 
+    def test_project_membership_isolation_and_revocation(self):
+        self.login()
+        status, project = self.request("/api/projects", {"name": "Private product"})
+        self.assertEqual(status, 201)
+        query = "?project=" + project["id"]
+        status, _ = self.request(
+            "/api/members" + query,
+            {
+                "username": "test_analyst",
+                "password": "test-secret-1234",
+                "role": "analyst",
+            },
+        )
+        self.assertEqual(status, 200)
+        member = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+        )
+        self.assertEqual(
+            self.request(
+                "/api/login",
+                {"username": "test_analyst", "password": "test-secret-1234"},
+                client=member,
+            )[0],
+            200,
+        )
+        self.assertEqual(
+            self.request("/api/overview?project=demo", client=member)[0], 403
+        )
+        self.assertEqual(self.request("/api/overview" + query, client=member)[0], 200)
+        self.assertEqual(self.request("/api/token" + query, {}, client=member)[0], 403)
+        self.assertEqual(
+            self.request(
+                "/api/reports" + query,
+                {"name": "Report", "segment": {"and": []}},
+                client=member,
+            )[0],
+            200,
+        )
+        self.assertEqual(
+            self.request("/api/members" + query, {"id": "owner"}, method="DELETE")[0],
+            400,
+        )
+        self.assertEqual(
+            self.request(
+                "/api/members" + query, {"id": "test_analyst"}, method="DELETE"
+            )[0],
+            200,
+        )
+        self.assertEqual(self.request("/api/overview" + query, client=member)[0], 403)
+
+    def test_comparison_and_investigation_history(self):
+        self.login()
+        status, data = self.request("/api/overview")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["series"]), len(data["previousSeries"]))
+        self.assertEqual(
+            self.request(
+                "/api/investigate", {"question": "Why did conversion change?"}
+            )[0],
+            200,
+        )
+        status, history = self.request("/api/investigations")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(history), 1)
+        self.assertIn("trace", history[0]["result"])
+
+    def test_alert_cooldown_sample_and_acknowledgement(self):
+        from unittest.mock import patch
+
+        self.login()
+        status, rules = self.request(
+            "/api/alerts",
+            {
+                "metric": "errors",
+                "threshold": 1,
+                "minimumSessions": 20,
+                "cooldownMinutes": 60,
+            },
+        )
+        self.assertEqual(status, 200)
+        with patch.object(s, "metrics", return_value={"errors": 10, "sessions": 2}):
+            s.evaluate_alerts(10000)
+        self.assertEqual(self.request("/api/notifications")[1], [])
+        with patch.object(s, "metrics", return_value={"errors": 10, "sessions": 25}):
+            s.evaluate_alerts(10000)
+            s.evaluate_alerts(10001)
+        rows = self.request("/api/notifications")[1]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            self.request("/api/notifications", {"id": rows[0]["id"]})[1][0][
+                "acknowledged"
+            ],
+            True,
+        )
+        with patch.object(s, "metrics", return_value={"errors": 10, "sessions": 25}):
+            s.evaluate_alerts(14000)
+        self.assertEqual(len(self.request("/api/notifications")[1]), 2)
+        self.assertEqual(self.request("/api/notifications?project=sandbox")[1], [])
+
     def test_durable_accept_then_processing(self):
         status, r = self.batch([event()])
         self.assertEqual(status, 202)
@@ -337,7 +436,9 @@ class PipelineTests(unittest.TestCase):
         self.login()
         self.batch([event(typ="error")])
         s.consume_once()
-        r = self.request("/api/alerts", {"metric": "errors", "threshold": 0})
+        r = self.request(
+            "/api/alerts", {"metric": "errors", "threshold": 0, "minimumSessions": 1}
+        )
         self.assertTrue(r[1][0]["triggered"])
         self.assertEqual(len(self.request("/api/alerts")[1]), 1)
 

@@ -1,3 +1,4 @@
+import { onCLS, onINP, onLCP, onTTFB } from 'web-vitals';
 export interface Event {
   eventId: string;
   schemaVersion: 1;
@@ -351,29 +352,24 @@ export class DeucalInt {
       if (XMLHttpRequest.prototype.open === wrappedOpen) XMLHttpRequest.prototype.open = xhrOpen;
       if (XMLHttpRequest.prototype.send === wrappedSend) XMLHttpRequest.prototype.send = xhrSend;
     });
-    for (const type of ['largest-contentful-paint', 'layout-shift', 'event', 'navigation']) {
+    const vitalsGeneration = this.generation;
+    for (const observe of [onCLS, onINP, onLCP, onTTFB]) {
       try {
-        const observer = new PerformanceObserver((list) => {
-          for (const e of list.getEntries()) {
-            const item = e as PerformanceEntry & {
-              value?: number;
-              hadRecentInput?: boolean;
-              responseStart?: number;
-            };
-            const props =
-              type === 'largest-contentful-paint'
-                ? { lcp: e.startTime }
-                : type === 'layout-shift'
-                  ? { cls: item.hadRecentInput ? 0 : item.value || 0 }
-                  : type === 'event'
-                    ? { inp: e.duration }
-                    : { ttfb: item.responseStart || 0 };
-            this.track('web_vital', props, 'performance');
-          }
+        observe((metric) => {
+          if (vitalsGeneration !== this.generation) return;
+          this.track(
+            'web_vital',
+            {
+              [metric.name.toLowerCase()]: metric.value,
+              rating: metric.rating,
+              metricId: metric.id,
+            },
+            'performance',
+          );
         });
-        observer.observe({ type, buffered: true });
-        this.cleanups.push(() => observer.disconnect());
-      } catch {}
+      } catch {
+        /* Older browsers may not expose the required performance entries. */
+      }
     }
     this.on(document, 'visibilitychange', () => {
       if (document.visibilityState === 'hidden') this.beacon();

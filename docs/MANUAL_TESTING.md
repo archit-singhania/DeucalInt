@@ -102,3 +102,22 @@ For a controlled outage, run `tests/chaos/dependency-outage.ps1 -Service clickho
 Create a virtual environment and install `apps/ai-engine/requirements.txt`. Run Uvicorn with `AI_SERVICE_TOKEN` configured. Point `DEUCALINT_AI_URL` at that service and set the same token on the local API. Without `OLLAMA_URL` it plans deterministically. With Ollama running and a compatible installed model, set `OLLAMA_URL` and `OLLAMA_MODEL` on the intelligence service.
 
 The model may choose only a named tool and a validated segment. Dashboard evidence is still computed from authorized events. A bad model plan must fail rather than execute arbitrary SQL.
+
+
+## Premium UI and access upgrade
+
+1. Use the moon/sun button; reload and verify the selected theme persists. Check both themes at desktop and 390px mobile widths.
+2. Press Ctrl+K (Cmd+K on macOS), search Team, and open it. Escape closes the dialog; Tab stays inside an open dialog.
+3. On Overview, enable Previous period. Hover the chart, or focus it and use arrow keys; Enter opens bucket values.
+4. Click Build segment, Add rule, select device equals mobile, and Apply. Combine with a browser filter. Remove the chip to reset. Save/reopen the combined segment on Funnels.
+5. On Funnels, reorder/edit/add steps, then Apply. Counts should follow the new event order.
+6. Run an investigation, leave and return. Recent investigations should restore their original result and window.
+7. Open Connect a source, create a uniquely named test project, and copy the displayed token. Its overview starts empty. Use that token in the Demo store to verify capture.
+8. In Team & access, create an analyst with a unique username and a password of at least 12 characters. Sign out and enter those credentials. The account sees only its assigned project, can save reports, and cannot rotate tokens or change retention. Sign in as owner, revoke that member, and verify its existing session loses project access.
+9. In Demo store, enable slow checkout and synthetic high LCP, then checkout. The LCP fault is deliberately generated demo telemetry, not an actual browser measurement.
+
+Local account passwords are hashed with salted PBKDF2. Seed owner/viewer credentials are initialized when accounts are first created; changing environment defaults later does not reset an existing account. Sessions remain in memory and expire after eight hours or server restart. Invitation, password reset and OIDC flows are not implemented.
+
+## Scheduled alerts
+
+Create an errors rule with threshold 0, minimum sessions 1, and cooldown 60 minutes in a project with captured errors. Wait up to one minute, then refresh Alerts. Expect one inbox notification. Acknowledge it; refresh again and verify acknowledgement persists. The scheduler must not issue another notification during cooldown. A project below the minimum sample shows Awaiting sample. Rules use the entire project over 24 hours, independently of dashboard filters. External delivery and distributed scheduling remain unavailable.

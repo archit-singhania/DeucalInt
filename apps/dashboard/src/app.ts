@@ -1,9 +1,21 @@
-import { Component, OnInit, OnDestroy, ChangeDetectorRef, inject } from '@angular/core';
+import {
+  Component,
+  OnInit,
+  OnDestroy,
+  ChangeDetectorRef,
+  inject,
+  HostListener,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DeucalInt } from '../../../packages/web-sdk/src/index';
-import template from './app.html?raw';
+import { IconComponent } from './icon';
 
-@Component({ selector: 'di-root', standalone: true, imports: [CommonModule], template })
+@Component({
+  selector: 'di-root',
+  standalone: true,
+  imports: [CommonModule, IconComponent],
+  templateUrl: './app.html',
+})
 export class AppComponent implements OnInit, OnDestroy {
   private cdr = inject(ChangeDetectorRef);
   private hashChanged = () => {
@@ -41,6 +53,8 @@ export class AppComponent implements OnInit, OnDestroy {
     {
       group: 'MANAGE',
       items: [
+        ['onboarding', 'Connect a source', 'settings'],
+        ['team', 'Team & access', 'users'],
         ['settings', 'Project settings', '⚙'],
         ['demo', 'Demo commerce', '↗'],
       ],
@@ -90,6 +104,274 @@ export class AppComponent implements OnInit, OnDestroy {
   funnelSteps = 'page_view, product_viewed, checkout_started, purchase_completed';
   funnelOrdered = true;
   funnelWindow = 1800;
+  username = 'owner';
+  profile = 'local';
+  commandOpen = false;
+  commandQuery = '';
+  dark = localStorage.getItem('deucalint-theme') === 'dark';
+  showSegments = false;
+  rules: { dimension: string; operator: string; value: string }[] = [];
+  draftRules: { dimension: string; operator: string; value: string }[] = [];
+  comparePrevious = false;
+  chartSessions = true;
+  chartPageviews = true;
+  hoverIndex = -1;
+  selectedBucket: any = null;
+  insights: any = null;
+  history: any[] = [];
+  notifications: any[] = [];
+  retentionCell: any = null;
+  journeyFocus = '';
+  replayFilter = 'all';
+  newUsername = '';
+  newPassword = '';
+  newRole = 'viewer';
+  newProjectName = '';
+  alertMinimum = 20;
+  alertCooldown = 60;
+  slowApi = false;
+  highLcp = false;
+  private modalReturnFocus: HTMLElement | null = null;
+  get canManage() {
+    return ['owner', 'admin'].includes(this.role);
+  }
+  get canEditReports() {
+    return ['owner', 'admin', 'analyst'].includes(this.role);
+  }
+  get commands() {
+    return this.nav
+      .flatMap((g) => g.items)
+      .filter((i) => i[1].toLowerCase().includes(this.commandQuery.toLowerCase()));
+  }
+  get stale() {
+    return !!this.data && Date.now() - Date.parse(this.data.updatedAt) > 120000;
+  }
+  get steps() {
+    return this.funnelSteps.split(',').map((s) => s.trim());
+  }
+  get hoverBucket() {
+    return this.data?.series[this.hoverIndex];
+  }
+  get timelineEvents() {
+    return (this.selectedSession?.events || [])
+      .map((e: any, index: number) => ({ ...e, index }))
+      .filter((e: any) => this.replayFilter === 'all' || e.type === this.replayFilter);
+  }
+  get focusedJourneys() {
+    return this.detail || [];
+  }
+  @HostListener('document:keydown', ['$event']) keyboard(event: KeyboardEvent) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      this.openCommand();
+      return;
+    }
+    if (event.key === 'Escape') {
+      this.closeDialogs();
+      this.showSegments = false;
+      return;
+    }
+    if (event.key === 'Tab') {
+      const modals = Array.from(document.querySelectorAll<HTMLElement>('.modal[role="dialog"]'));
+      const modal = modals.at(-1);
+      if (!modal) return;
+      const items = Array.from(
+        modal.querySelectorAll<HTMLElement>(
+          'button:not([disabled]),input:not([disabled]),select:not([disabled]),a[href],[tabindex="0"]',
+        ),
+      ).filter((e) => e.getClientRects().length);
+      if (!items.length) return;
+      const first = items[0],
+        last = items[items.length - 1];
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || !modal.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        last.focus();
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === last || !modal.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  }
+  focusModal() {
+    this.modalReturnFocus = document.activeElement as HTMLElement;
+    setTimeout(() => document.querySelector<HTMLElement>('.modal input,.modal button')?.focus(), 0);
+  }
+  openCommand() {
+    this.commandOpen = true;
+    this.commandQuery = '';
+    this.focusModal();
+  }
+  closeDialogs() {
+    this.commandOpen = false;
+    this.evidence = null;
+    this.selectedSession = null;
+    this.selectedBucket = null;
+    this.playing = false;
+    clearInterval(this.playback);
+    this.modalReturnFocus?.focus();
+  }
+  chooseCommand(view: string) {
+    this.closeDialogs();
+    this.navigate(view);
+  }
+  toggleTheme() {
+    this.dark = !this.dark;
+    localStorage.setItem('deucalint-theme', this.dark ? 'dark' : 'light');
+    document.documentElement.dataset['theme'] = this.dark ? 'dark' : 'light';
+  }
+  openSegments() {
+    this.draftRules = this.rules.map((r) => ({ ...r }));
+    this.showSegments = !this.showSegments;
+  }
+  addRule() {
+    if (this.draftRules.length < 6)
+      this.draftRules.push({ dimension: 'device', operator: 'eq', value: 'mobile' });
+  }
+  applySegments() {
+    this.rules = this.draftRules
+      .filter((r) => r.value.trim())
+      .map((r) => ({ ...r, value: r.value.trim() }));
+    this.showSegments = false;
+    void this.filter();
+  }
+  removeRule(index: number) {
+    this.rules.splice(index, 1);
+    void this.filter();
+  }
+  updateStep(index: number, event: Event) {
+    const steps = this.steps;
+    steps[index] = this.value(event);
+    this.funnelSteps = steps.join(', ');
+  }
+  moveStep(index: number, delta: number) {
+    const steps = this.steps;
+    const to = index + delta;
+    if (to < 0 || to >= steps.length) return;
+    [steps[index], steps[to]] = [steps[to], steps[index]];
+    this.funnelSteps = steps.join(', ');
+  }
+  removeStep(index: number) {
+    if (this.steps.length <= 2) return;
+    this.funnelSteps = this.steps.filter((_, i) => i !== index).join(', ');
+  }
+  addStep() {
+    if (this.steps.length < 8) this.funnelSteps += ', custom_event';
+  }
+  chartMove(event: MouseEvent) {
+    const rect = (event.currentTarget as SVGElement).getBoundingClientRect();
+    this.hoverIndex = Math.max(
+      0,
+      Math.min(
+        (this.data?.series.length || 1) - 1,
+        Math.round(
+          ((event.clientX - rect.left) / rect.width) * ((this.data?.series.length || 1) - 1),
+        ),
+      ),
+    );
+  }
+  chartKey(event: KeyboardEvent) {
+    if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      event.preventDefault();
+      this.hoverIndex = Math.max(
+        0,
+        Math.min(
+          (this.data?.series.length || 1) - 1,
+          this.hoverIndex + (event.key === 'ArrowRight' ? 1 : -1),
+        ),
+      );
+    }
+    if (event.key === 'Enter') this.openBucket();
+  }
+  openBucket() {
+    if (this.hoverBucket) {
+      this.selectedBucket = this.hoverBucket;
+      this.focusModal();
+    }
+  }
+  previousLine() {
+    const values = this.data?.previousSeries || [];
+    return values
+      .map(
+        (v: any, i: number) =>
+          `${i ? 'L' : 'M'} ${(i * 780) / Math.max(values.length - 1, 1)} ${190 - (v.sessions / this.chartMax) * 155}`,
+      )
+      .join(' ');
+  }
+  openEvidence(e: any) {
+    this.evidence = e;
+    this.focusModal();
+  }
+  restoreInvestigation(item: any) {
+    this.investigation = item.result;
+    this.question = item.question;
+  }
+  async createMember() {
+    try {
+      this.detail = await this.api('/api/members?' + this.query, {
+        method: 'POST',
+        body: JSON.stringify({
+          username: this.newUsername,
+          password: this.newPassword,
+          role: this.newRole,
+        }),
+      });
+      this.newUsername = '';
+      this.newPassword = '';
+      this.notify('Member added to this project.');
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+  async removeMember(id: string) {
+    if (!confirm('Remove this member’s access to the selected project?')) return;
+    try {
+      this.detail = await this.api('/api/members?' + this.query, {
+        method: 'DELETE',
+        body: JSON.stringify({ id }),
+      });
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+  async createProject() {
+    try {
+      const p = await this.api('/api/projects?' + this.query, {
+        method: 'POST',
+        body: JSON.stringify({ name: this.newProjectName }),
+      });
+      this.projects = await this.api('/api/projects');
+      this.project = p.id;
+      this.role = 'owner';
+      this.demoToken = p.token;
+      this.rotatedToken = p.token;
+      this.newProjectName = '';
+      this.rules = [];
+      this.browser = 'All browsers';
+      this.connectLive();
+      await this.refresh();
+      this.notify('Project created. Copy the public token before leaving this page.');
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+  async acknowledgeAlert(id: string) {
+    try {
+      await this.api('/api/notifications?' + this.query, {
+        method: 'POST',
+        body: JSON.stringify({ id }),
+      });
+      this.notify('Notification acknowledged.');
+      await this.refresh();
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
   get title() {
     return this.nav.flatMap((g) => g.items).find((x) => x[0] === this.view)?.[1] || 'Overview';
   }
@@ -108,13 +390,16 @@ export class AppComponent implements OnInit, OnDestroy {
         alerts: 'Know when the metrics that matter change.',
         settings: 'A little control goes a long way.',
         demo: 'Create real events. Watch the story unfold.',
+        onboarding: 'From first event to first insight, in a few minutes.',
+        team: 'The right access for everyone building your product.',
       } as Record<string, string>
     )[this.view];
   }
   get segment() {
-    return this.browser === 'All browsers'
-      ? null
-      : { dimension: 'browser', operator: 'eq', value: this.browser };
+    const parts: any[] = this.rules.map((r) => ({ ...r }));
+    if (this.browser !== 'All browsers')
+      parts.unshift({ dimension: 'browser', operator: 'eq', value: this.browser });
+    return parts.length ? { and: parts } : null;
   }
   get query() {
     return (
@@ -123,6 +408,7 @@ export class AppComponent implements OnInit, OnDestroy {
     );
   }
   async ngOnInit() {
+    document.documentElement.dataset['theme'] = this.dark ? 'dark' : 'light';
     try {
       const me = await this.api('/api/me');
       this.role = me.role;
@@ -162,7 +448,7 @@ export class AppComponent implements OnInit, OnDestroy {
     try {
       const me = await this.api('/api/login', {
         method: 'POST',
-        body: JSON.stringify({ password: this.password, role: this.role }),
+        body: JSON.stringify({ password: this.password, role: this.role, username: this.username }),
       });
       this.role = me.role;
       this.loggedIn = true;
@@ -172,7 +458,11 @@ export class AppComponent implements OnInit, OnDestroy {
     }
   }
   async start() {
+    this.profile = (await this.api('/health')).profile;
     this.projects = await this.api('/api/projects');
+    if (!this.projects.some((p) => p.id === this.project))
+      this.project = this.projects[0]?.id || '';
+    this.role = this.projects.find((p) => p.id === this.project)?.role || this.role;
     await this.refresh();
     this.connectLive();
     window.removeEventListener('hashchange', this.hashChanged);
@@ -196,6 +486,8 @@ export class AppComponent implements OnInit, OnDestroy {
   }
   async changeProject(event: Event) {
     this.project = this.value(event);
+    this.role = this.projects.find((p) => p.id === this.project)?.role || this.role;
+    this.rules = [];
     this.demoToken = this.project === 'demo' ? 'pk_demo_deucalint' : 'pk_sandbox_deucalint';
     this.sdk?.destroy();
     this.consent = false;
@@ -247,6 +539,8 @@ export class AppComponent implements OnInit, OnDestroy {
           alerts: 'alerts',
           settings: 'settings',
           demo: '',
+          onboarding: '',
+          team: 'members',
         } as Record<string, string>
       )[this.view];
       if (endpoint) {
@@ -264,7 +558,16 @@ export class AppComponent implements OnInit, OnDestroy {
         this.detail = detail;
         if (endpoint === 'settings') this.retentionDays = this.detail.retention;
       }
+      if (this.view === 'alerts')
+        this.notifications = await this.api('/api/notifications?' + this.query);
       this.reports = await this.api('/api/reports?' + this.query);
+      if (this.view === 'overview' || this.view === 'investigate') {
+        const insights = await this.api('/api/insights?' + this.query);
+        if (id !== this.requestId) return;
+        this.insights = insights;
+      }
+      if (this.view === 'investigate')
+        this.history = await this.api('/api/investigations?' + this.query);
     } catch (e) {
       if (id === this.requestId) this.error = String(e);
     } finally {
@@ -283,7 +586,14 @@ export class AppComponent implements OnInit, OnDestroy {
     return prev ? (((current - prev) / prev) * 100).toFixed(1) : '—';
   }
   get chartMax() {
-    return Math.max(1, ...(this.data?.series || []).flatMap((x: any) => [x.sessions, x.pageviews]));
+    return Math.max(
+      1,
+      ...(this.data?.series || []).flatMap((x: any) => [
+        this.chartSessions ? x.sessions : 0,
+        this.chartPageviews ? x.pageviews : 0,
+      ]),
+      ...(this.comparePrevious ? this.data?.previousSeries || [] : []).map((x: any) => x.sessions),
+    );
   }
   line(key: string, shared = false) {
     const values = (this.data?.series || []).map((x: any) => x[key] || 0);
@@ -345,6 +655,7 @@ export class AppComponent implements OnInit, OnDestroy {
         method: 'POST',
         body: JSON.stringify({ question: this.question }),
       });
+      this.history = await this.api('/api/investigations?' + this.query);
     } catch (e) {
       this.error = String(e);
     } finally {
@@ -365,6 +676,8 @@ export class AppComponent implements OnInit, OnDestroy {
     this.replayIndex = 0;
     this.playing = false;
     clearInterval(this.playback);
+    this.replayFilter = 'all';
+    this.focusModal();
   }
   get replayFrame() {
     if (!this.selectedSession) return null;
@@ -401,7 +714,12 @@ export class AppComponent implements OnInit, OnDestroy {
     try {
       this.detail = await this.api('/api/alerts?' + this.query, {
         method: 'POST',
-        body: JSON.stringify({ metric: this.alertMetric, threshold: this.threshold }),
+        body: JSON.stringify({
+          metric: this.alertMetric,
+          threshold: this.threshold,
+          minimumSessions: this.alertMinimum,
+          cooldownMinutes: this.alertCooldown,
+        }),
       });
       this.notify('Alert rule saved.');
     } catch (e) {
@@ -468,6 +786,8 @@ export class AppComponent implements OnInit, OnDestroy {
         }),
       });
       this.notify('Report saved.');
+      if (this.view === 'alerts')
+        this.notifications = await this.api('/api/notifications?' + this.query);
       this.reports = await this.api('/api/reports?' + this.query);
     } catch (e) {
       this.error = String(e);
@@ -476,7 +796,10 @@ export class AppComponent implements OnInit, OnDestroy {
   useReport(event: Event) {
     const r = this.reports.find((x) => x.id === this.value(event));
     if (r) {
-      this.browser = r.segment.value || 'All browsers';
+      this.browser = 'All browsers';
+      this.rules = (r.segment.and || [r.segment])
+        .filter((x: any) => x.dimension)
+        .map((x: any) => ({ ...x }));
       void this.filter();
     }
   }
@@ -515,13 +838,19 @@ export class AppComponent implements OnInit, OnDestroy {
   }
   async checkout() {
     this.sdk?.track('checkout_started', { items: this.cart });
+    if (this.slowApi) await new Promise((r) => setTimeout(r, 1200));
+    if (this.highLcp) this.sdk?.track('web_vital', { lcp: 4600 }, 'performance');
     if (this.fault) {
       this.sdk?.track('release_published', { environment: 'demo' }, 'deployment');
       this.sdk?.track('POST /payments', { duration: 1450, status: 500 }, 'network');
       this.sdk?.track('PaymentFormError', { fingerprint: 'payment-form-v1' }, 'error');
       this.orderStatus = 'Payment failed — simulated regression captured.';
     } else {
-      this.sdk?.track('POST /payments', { duration: 240, status: 200 }, 'network');
+      this.sdk?.track(
+        'POST /payments',
+        { duration: this.slowApi ? 1450 : 240, status: 200 },
+        'network',
+      );
       this.sdk?.track('purchase_completed', { amount: this.cart * 129 });
       this.orderStatus = 'Order placed. Thank you for exploring DeucalInt.';
       this.cart = 0;

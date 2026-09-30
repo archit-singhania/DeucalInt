@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "outDir": "./.angular/out-tsc", "noEmit": false, "types": [] },
+  "angularCompilerOptions": {
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "strictTemplates": true
+  },
+  "files": ["apps/dashboard/src/main.ts"],
+  "include": ["apps/dashboard/src/**/*.d.ts"]
+}

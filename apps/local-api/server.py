@@ -206,6 +206,10 @@ def init_db(seed=True):
     with connect() as c:
         c.executescript(
             """PRAGMA journal_mode=WAL;
+        CREATE TABLE IF NOT EXISTS notifications(id TEXT PRIMARY KEY,project TEXT,rule TEXT,created REAL,body TEXT,acknowledged INTEGER DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS notification_rule ON notifications(project,rule,created);
+        CREATE TABLE IF NOT EXISTS accounts(username TEXT PRIMARY KEY,salt TEXT,password TEXT);
+        CREATE TABLE IF NOT EXISTS memberships(username TEXT,project TEXT,role TEXT,PRIMARY KEY(username,project));
         CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,name TEXT,token_hash TEXT,retention INTEGER DEFAULT 90);
         CREATE TABLE IF NOT EXISTS inbox(id INTEGER PRIMARY KEY AUTOINCREMENT,project TEXT,event_id TEXT,body TEXT,status TEXT DEFAULT 'pending',created REAL,UNIQUE(project,event_id));
         CREATE TABLE IF NOT EXISTS events(project TEXT,event_id TEXT,session TEXT,visitor TEXT,ts REAL,body TEXT,PRIMARY KEY(project,event_id));
@@ -223,6 +227,22 @@ def init_db(seed=True):
             "INSERT OR IGNORE INTO projects(id,name,token_hash) VALUES(?,?,?)",
             ("sandbox", "Empty sandbox", hashed("pk_sandbox_deucalint")),
         )
+        for username, password in (
+            ("owner", os.environ.get("DEUCALINT_PASSWORD", "deucalint-local")),
+            ("viewer", os.environ.get("DEUCALINT_VIEWER_PASSWORD", "deucalint-viewer")),
+        ):
+            salt = secrets.token_hex(16)
+            digest = hashlib.pbkdf2_hmac(
+                "sha256", password.encode(), salt.encode(), 200000
+            ).hex()
+            c.execute(
+                "INSERT OR IGNORE INTO accounts VALUES(?,?,?)", (username, salt, digest)
+            )
+            for project in ("demo", "sandbox"):
+                c.execute(
+                    "INSERT OR IGNORE INTO memberships VALUES(?,?,?)",
+                    (username, project, username),
+                )
         exists = c.execute(
             "SELECT count(*) FROM events WHERE project='demo'"
         ).fetchone()[0]
@@ -443,6 +463,52 @@ def consume_once():
         return len(rows)
 
 
+def evaluate_alerts(now=None):
+    """One local evaluator; durable cooldown survives worker restarts."""
+    if DISTRIBUTED:
+        return
+    now = time.time() if now is None else now
+    with connect() as c:
+        rules = [
+            (r[0], json.loads(r[1]))
+            for r in c.execute("SELECT project,body FROM configs WHERE kind='alerts'")
+        ]
+    cache = {}
+    for project, rule in rules:
+        if project not in cache:
+            cache[project] = metrics(read_events(project, 1))
+        m = cache[project]
+        value = m[rule["metric"]]
+        triggered = (
+            value < rule["threshold"]
+            if rule["metric"] == "conversion"
+            else value > rule["threshold"]
+        )
+        if not triggered or m["sessions"] < rule.get("minimumSessions", 20):
+            continue
+        with connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            recent = c.execute(
+                "SELECT 1 FROM notifications WHERE project=? AND rule=? AND created>?",
+                (project, rule["id"], now - rule.get("cooldownMinutes", 60) * 60),
+            ).fetchone()
+            if recent:
+                continue
+            payload = {
+                "metric": rule["metric"],
+                "value": value,
+                "threshold": rule["threshold"],
+                "sessions": m["sessions"],
+                "windowHours": 24,
+            }
+            c.execute(
+                "INSERT INTO notifications(id,project,rule,created,body) VALUES(?,?,?,?,?)",
+                (secrets.token_hex(12), project, rule["id"], now, json.dumps(payload)),
+            )
+    with connect() as c:
+        c.execute("DELETE FROM notifications WHERE created<?", (now - 90 * 86400,))
+
+
 def worker():
     last = 0
     while not STOP.wait(0.25):
@@ -459,6 +525,7 @@ def worker():
                         "DELETE FROM inbox WHERE status='done' AND created<?",
                         (time.time() - 86400,),
                     )
+                evaluate_alerts()
                 last = time.time()
         except sqlite3.Error:
             COUNTERS["worker_failures"] += 1
@@ -514,6 +581,20 @@ def overview(project, days=7, ast=None):
         }
         for i in range(buckets)
     ]
+    previous_groups = defaultdict(list)
+    for e in previous:
+        index = max(
+            0,
+            min(
+                buckets - 1,
+                int((stamp(e["timestamp"]) - (cutoff - days * 86400)) / width),
+            ),
+        )
+        previous_groups[index].append(e)
+    previous_series = [
+        {"label": series[i]["label"], **metrics(previous_groups[i])}
+        for i in range(buckets)
+    ]
     distributions = {
         key: [
             {"name": name, "count": n}
@@ -527,6 +608,7 @@ def overview(project, days=7, ast=None):
         "metrics": metrics(current),
         "previous": metrics(previous),
         "series": series,
+        "previousSeries": previous_series,
         "distributions": distributions,
         "pages": [
             {"name": p, "count": n}
@@ -596,6 +678,15 @@ class Handler(BaseHTTPRequestHandler):
                 user = None
         if not user:
             raise PermissionError("Sign in to continue")
+        user = dict(user)
+        if not DISTRIBUTED:
+            with connect() as c:
+                memberships = c.execute(
+                    "SELECT project,role FROM memberships WHERE username=?",
+                    (user.get("username", user["role"]),),
+                ).fetchall()
+            user["memberships"] = {r["project"]: r["role"] for r in memberships}
+            user["projects"] = list(user["memberships"])
         return user
 
     def limited(self, key, limit):
@@ -693,21 +784,28 @@ class Handler(BaseHTTPRequestHandler):
             if self.limited("login:" + self.client_address[0], 20):
                 return self.send(429, {"error": "Too many login attempts"})
             data = self.body()
-            role = data.get("role", "owner")
+            username = str(data.get("username", data.get("role", "owner")))
             password = str(data.get("password", ""))
-            expected = (
-                os.environ.get("DEUCALINT_PASSWORD", "deucalint-local")
-                if role == "owner"
-                else os.environ.get("DEUCALINT_VIEWER_PASSWORD", "deucalint-viewer")
-            )
-            if role not in ("owner", "viewer") or not hmac.compare_digest(
-                password, expected
+            with connect() as c:
+                account = c.execute(
+                    "SELECT * FROM accounts WHERE username=?", (username,)
+                ).fetchone()
+                memberships = c.execute(
+                    "SELECT project,role FROM memberships WHERE username=?", (username,)
+                ).fetchall()
+            if not account or not hmac.compare_digest(
+                hashlib.pbkdf2_hmac(
+                    "sha256", password.encode(), account["salt"].encode(), 200000
+                ).hex(),
+                account["password"],
             ):
                 raise PermissionError("Invalid credentials")
+            role = memberships[0]["role"] if memberships else "viewer"
             token = secrets.token_urlsafe(32)
             with LOGIN_LOCK:
                 LOGIN[token] = {
                     "role": role,
+                    "username": username,
                     "projects": (
                         list(json.loads(os.environ.get("DEUCALINT_QUERY_TOKENS", "{}")))
                         if DISTRIBUTED
@@ -815,6 +913,31 @@ class Handler(BaseHTTPRequestHandler):
             )
         if path == "/api/me":
             return self.send(200, {"role": user["role"]})
+        if path == "/api/projects" and method == "POST":
+            if DISTRIBUTED:
+                return self.send(
+                    501,
+                    {
+                        "error": "Project provisioning requires distributed control-plane support"
+                    },
+                )
+            if "owner" not in user.get("memberships", {}).values():
+                raise PermissionError("Owner role required")
+            name = str(self.body().get("name", "")).strip()
+            if not 2 <= len(name) <= 80:
+                raise ValueError("Project name must contain 2–80 characters")
+            pid = secrets.token_hex(8)
+            token = "pk_" + secrets.token_urlsafe(24)
+            with connect() as c:
+                c.execute(
+                    "INSERT INTO projects(id,name,token_hash) VALUES(?,?,?)",
+                    (pid, name, hashed(token)),
+                )
+                c.execute(
+                    "INSERT INTO memberships VALUES(?,?,?)",
+                    (user["username"], pid, "owner"),
+                )
+            return self.send(201, {"id": pid, "token": token})
         if path == "/api/projects":
             with connect() as c:
                 rows = [
@@ -824,12 +947,89 @@ class Handler(BaseHTTPRequestHandler):
                     ).fetchall()
                     if r["id"] in user["projects"]
                 ]
+            for row in rows:
+                row["role"] = user.get("memberships", {}).get(row["id"], user["role"])
             return self.send(200, rows)
         project = q.get("project", ["demo"])[0]
         if project not in user["projects"]:
             raise PermissionError("Project access denied")
-        if method != "GET" and user["role"] != "owner":
-            raise PermissionError("Owner role required")
+        user["role"] = user.get("memberships", {}).get(project, user["role"])
+        allowed = (
+            ("owner", "admin", "analyst")
+            if path in ("/api/reports", "/api/alerts", "/api/notifications")
+            else ("owner", "admin")
+        )
+        if (
+            method != "GET"
+            and path != "/api/investigate"
+            and user["role"] not in allowed
+        ):
+            raise PermissionError("Insufficient project role")
+        if path == "/api/members":
+            if DISTRIBUTED:
+                return self.send(
+                    501,
+                    {"error": "Distributed membership management is not implemented"},
+                )
+            with connect() as c:
+                if method == "POST":
+                    data = self.body()
+                    name = str(data.get("username", "")).strip()
+                    password = str(data.get("password", ""))
+                    role = data.get("role")
+                    if (
+                        not 3 <= len(name) <= 64
+                        or not name.replace("_", "").replace("-", "").isalnum()
+                        or role not in ("admin", "developer", "analyst", "viewer")
+                    ):
+                        raise ValueError("Invalid username or role")
+                    exists = c.execute(
+                        "SELECT 1 FROM accounts WHERE username=?", (name,)
+                    ).fetchone()
+                    if exists:
+                        raise ValueError(
+                            "Username already exists; account linking is not supported"
+                        )
+                    if len(password) < 12:
+                        raise ValueError("Password requires at least 12 characters")
+                    salt = secrets.token_hex(16)
+                    digest = hashlib.pbkdf2_hmac(
+                        "sha256", password.encode(), salt.encode(), 200000
+                    ).hex()
+                    c.execute(
+                        "INSERT INTO accounts VALUES(?,?,?)", (name, salt, digest)
+                    )
+                    c.execute(
+                        "INSERT INTO memberships VALUES(?,?,?)", (name, project, role)
+                    )
+                    c.execute(
+                        "INSERT INTO audit(project,action,ts) VALUES(?,?,?)",
+                        (project, "member.created:" + name, iso()),
+                    )
+                elif method == "DELETE":
+                    name = str(self.body().get("id", ""))
+                    member = c.execute(
+                        "SELECT role FROM memberships WHERE username=? AND project=?",
+                        (name, project),
+                    ).fetchone()
+                    if member and member["role"] == "owner":
+                        raise ValueError("Owner access cannot be removed")
+                    c.execute(
+                        "DELETE FROM memberships WHERE username=? AND project=?",
+                        (name, project),
+                    )
+                    c.execute(
+                        "INSERT INTO audit(project,action,ts) VALUES(?,?,?)",
+                        (project, "member.removed:" + name, iso()),
+                    )
+                rows = [
+                    dict(r)
+                    for r in c.execute(
+                        "SELECT username AS id,username,role FROM memberships WHERE project=?",
+                        (project,),
+                    )
+                ]
+            return self.send(200, rows)
         if (
             DISTRIBUTED
             and method != "GET"
@@ -845,6 +1045,47 @@ class Handler(BaseHTTPRequestHandler):
         if not 1 <= days <= 90:
             raise ValueError("Days must be 1–90")
         ast = validate_ast(json.loads(q["segment"][0])) if "segment" in q else None
+        if path == "/api/notifications":
+            with connect() as c:
+                if method == "POST":
+                    c.execute(
+                        "UPDATE notifications SET acknowledged=1 WHERE project=? AND id=?",
+                        (project, str(self.body().get("id", ""))),
+                    )
+                rows = [
+                    {
+                        **json.loads(r["body"]),
+                        "id": r["id"],
+                        "createdAt": iso(r["created"]),
+                        "acknowledged": bool(r["acknowledged"]),
+                    }
+                    for r in c.execute(
+                        "SELECT * FROM notifications WHERE project=? ORDER BY created DESC LIMIT 100",
+                        (project,),
+                    )
+                ]
+            return self.send(200, rows)
+        if path == "/api/investigations":
+            with connect() as c:
+                rows = [
+                    json.loads(r[0])
+                    for r in c.execute(
+                        "SELECT body FROM configs WHERE project=? AND kind='investigation' ORDER BY rowid DESC LIMIT 20",
+                        (project,),
+                    )
+                ]
+            return self.send(200, rows)
+        if path == "/api/insights":
+            summary = overview(project, days, ast)
+            return self.send(
+                200,
+                {
+                    "sessions": summary["metrics"]["sessions"],
+                    "errors": summary["metrics"]["errors"],
+                    "updatedAt": summary["updatedAt"],
+                    "sample": summary["sample"],
+                },
+            )
         if path == "/api/overview":
             return self.send(200, overview(project, days, ast))
         if path == "/api/live":
@@ -949,7 +1190,12 @@ class Handler(BaseHTTPRequestHandler):
                             or not 0 <= data["threshold"] <= 1e9
                         ):
                             raise ValueError("Invalid alert rule")
+                        minimum = int(data.get("minimumSessions", 20))
+                        cooldown = int(data.get("cooldownMinutes", 60))
+                        if not 1 <= minimum <= 1000000 or not 1 <= cooldown <= 10080:
+                            raise ValueError("Invalid sample minimum or cooldown")
                         data = {k: data[k] for k in ("metric", "threshold")}
+                        data.update(minimumSessions=minimum, cooldownMinutes=cooldown)
                         data["id"] = secrets.token_hex(8)
                     else:
                         validate_ast(data.get("segment", {"and": []}))
@@ -978,7 +1224,10 @@ class Handler(BaseHTTPRequestHandler):
                 m = metrics(read_events(project, 1))
                 for r in rows:
                     r["current"] = m[r["metric"]]
-                    r["triggered"] = (
+                    r["insufficientSample"] = m["sessions"] < r.get(
+                        "minimumSessions", 20
+                    )
+                    r["triggered"] = not r["insufficientSample"] and (
                         r["current"] > r["threshold"]
                         if r["metric"] != "conversion"
                         else r["current"] < r["threshold"]
@@ -1108,6 +1357,21 @@ class Handler(BaseHTTPRequestHandler):
             ]
             if planner_mode == "ollama":
                 result["mode"] = "Ollama tool planner + deterministic evidence engine"
+            with connect() as c:
+                item = {
+                    "id": secrets.token_hex(8),
+                    "question": question,
+                    "createdAt": iso(),
+                    "result": result,
+                }
+                c.execute(
+                    "INSERT INTO configs VALUES(?,?,?,?)",
+                    (project, "investigation", item["id"], json.dumps(item)),
+                )
+                c.execute(
+                    "DELETE FROM configs WHERE project=? AND kind='investigation' AND rowid NOT IN (SELECT rowid FROM configs WHERE project=? AND kind='investigation' ORDER BY rowid DESC LIMIT 20)",
+                    (project, project),
+                )
             return self.send(200, result)
         if path == "/api/sessions":
             rows = []

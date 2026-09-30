@@ -4,12 +4,12 @@ Last verified locally: **2026-09-30**, Windows, Node 24, Python 3.14, Java 21 an
 
 | Check | Observed result |
 |---|---|
-| TypeScript type check + Vite production build | Passed |
-| Python analytics, HTTP pipeline, privacy, authorization, lifecycle and FastAPI tests | **34 passed** |
+| Angular AOT production compilation + strict templates | Passed |
+| Python analytics, HTTP pipeline, privacy, authorization, lifecycle and FastAPI tests | **37 passed** |
 | Browser/Node SDK privacy, delivery retry and bundle-budget tests | **3 passed** |
 | Java collector contracts and SDK retry delivery | **4 passed** |
 | Testcontainers Kafka integration | **1 skipped: no Docker runtime** |
-| Playwright Chromium | **4 passed**: overview/evidence; analytics routes; SDK-to-live delivery; mobile overflow/layout |
+| Playwright Chromium | **5 passed**: overview/evidence; analytics routes; SDK-to-live delivery; mobile overflow/layout; command palette/theme/segments/comparison |
 | Java Maven reactor packaging | Passed for platform and Java SDK |
 | Prettier and Black | Passed |
 | Deployment/API YAML syntax | Parsed successfully; syntax validation is not deployment validation |
@@ -19,7 +19,7 @@ Last verified locally: **2026-09-30**, Windows, Node 24, Python 3.14, Java 21 an
 
 ## Measured scope
 
-The current browser SDK is **3,184 bytes gzip**, under its 12 KiB test budget. The dashboard uses Angular JIT and the build reports an approximately 1.07 MB uncompressed JavaScript chunk (~321 KB gzip). AOT compilation and route splitting remain a performance improvement; the build warning is not suppressed.
+The current browser SDK is **5,153 bytes gzip**, under its 12 KiB budget. Angular AOT now produces **309.03 KB total initial assets**, approximately **85.02 KB estimated transfer**. This replaces the previous JIT build. Route splitting remains optional future work. Python and browser coverage now includes membership isolation/revocation and new UI controls. Java results below are from the preceding verification; Java sources were not changed by this upgrade.
 
 `docs/benchmarks/local-results.json` contains actual in-process analytics timing and a reproducible 200-series synthetic MAD-detector evaluation. Its precision/recall results reflect deliberately simple labeled synthetic signals. They are not evidence of real-world forecasting quality or distributed system throughput.
 

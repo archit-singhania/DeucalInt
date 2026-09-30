@@ -1,6 +1,6 @@
 FROM node:24-alpine AS frontend
 WORKDIR /src
-COPY package*.json tsconfig.json vite.config.ts ./
+COPY package*.json tsconfig.json tsconfig.app.json angular.json ./
 RUN npm ci
 COPY apps/dashboard apps/dashboard
 COPY packages packages

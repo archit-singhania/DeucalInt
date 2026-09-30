@@ -35,7 +35,7 @@ For hot reload, keep the Python API running and use `npm run dev` in a second te
 - TypeScript browser SDK: explicit consent, DNT, batched delivery, retry/backoff, bounded persistent queue, SPA navigation, clicks, scroll, forms, errors, fetch/XHR timing, performance observations, and masked geometric replay.
 - Core metrics, realtime SSE, ordered/time-bounded funnels, exact-day retention, journey transitions, session timelines, and experiment statistics.
 - Error/network/performance views, release history, median/MAD anomalies, ranked correlated contributors, and evidence-backed investigations.
-- In-app alerts, owner/viewer authorization, local token rotation, retention cleanup, visitor/session erasure, and redelivery tombstones.
+- In-app alerts, five project roles and local membership management, local token rotation, retention cleanup, visitor/session erasure, and redelivery tombstones.
 - Java collector → Redpanda → Java worker → ClickHouse → Java read API code, plus a dashboard adapter for this profile.
 - Optional FastAPI/Ollama planner, Node and Java SDKs, tests, benchmark tooling, monitoring, CI, and deployment files.
 
@@ -45,7 +45,7 @@ For hot reload, keep the Python API running and use `npm run dev` in a second te
 
 | Profile | Data path | Dashboard | Status |
 |---|---|---|---|
-| Local | SDK → SQLite durable inbox → worker → scoped Python API → Angular | `:8100` or Vite `:4200` | Locally tested |
+| Local | SDK → SQLite durable inbox → worker → scoped Python API → Angular | `:8100` or Angular dev server `:4200` | Locally tested |
 | Distributed | SDK → Spring WebFlux → Redpanda → worker → ClickHouse → Spring read API → Python dashboard adapter → Angular | `:8200` | Java build tested; container integration not run here |
 
 Local data lives in `.data/deucalint.db`. The commerce project starts with a deterministic 35-day sample; **Empty sandbox** has no seed. The UI labels sample data. Live activity always uses actual events in the last five minutes.

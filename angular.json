@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "cli": { "analytics": false },
+  "projects": {
+    "deucalint": {
+      "projectType": "application",
+      "root": "apps/dashboard",
+      "sourceRoot": "apps/dashboard/src",
+      "architect": {
+        "build": {
+          "builder": "@angular/build:application",
+          "options": {
+            "browser": "apps/dashboard/src/main.ts",
+            "index": "apps/dashboard/index.html",
+            "tsConfig": "tsconfig.app.json",
+            "outputPath": { "base": "dist/dashboard", "browser": "" },
+            "styles": ["apps/dashboard/src/styles.css", "apps/dashboard/src/premium.css"],
+            "assets": [{ "glob": "**/*", "input": "apps/dashboard/public" }],
+            "optimization": { "scripts": true, "styles": true, "fonts": false },
+            "budgets": [{ "type": "initial", "maximumWarning": "650kB", "maximumError": "900kB" }]
+          },
+          "configurations": { "development": { "optimization": false, "sourceMap": true } }
+        },
+        "serve": {
+          "builder": "@angular/build:dev-server",
+          "options": {
+            "buildTarget": "deucalint:build:development",
+            "host": "127.0.0.1",
+            "port": 4200,
+            "proxyConfig": "apps/dashboard/proxy.json"
+          }
+        }
+      }
+    }
+  }
+}
