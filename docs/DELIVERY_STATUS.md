@@ -1,6 +1,6 @@
-# DeucalInt — Studio makeover and technical delivery
+# DeucalInt — Glass makeover and technical delivery
 
-Updated 2026-09-30. This is the current status; it supersedes earlier upgrade summaries.
+Updated 2026-10-01. This is the current status; it supersedes earlier upgrade summaries.
 
 **DeucalInt — Real-Time Behavioral Intelligence & Product Observability Platform**
 
@@ -8,7 +8,7 @@ Updated 2026-09-30. This is the current status; it supersedes earlier upgrade su
 
 ## What changed for the user
 
-The workspace now has a restrained emerald/neutral visual system, a quieter navigation shell, light/dark themes, consistent cards and controls, clearer data hierarchy, mobile layouts, and keyboard access. Setup screens show only the controls relevant to installation. External font requests were removed, so the interface also renders without Google Fonts.
+The workspace now uses an Apple-inspired glass visual system: silver and blue with subtle lavender highlights, translucent floating navigation, ambient gradients, rounded glass cards, and a midnight theme. This replaces the emerald design. Metrics lead the overview; the evidence prompt follows them. Connect your site sits in the top bar, Ask DeucalInt beside the page title, and export/refresh beside the filters. Login, setup, tables, dialogs, charts, maps, journeys, and settings share the new styling. Mobile uses a compact horizontal navigation dock and stacked content. Page entrances, dialogs, hover feedback, and loading skeletons respect reduced motion; opaque fallbacks support browsers without backdrop blur and increased contrast preferences. External font requests remain removed.
 
 Setup is now **register a site → paste one snippet → verify real signals**. HTML, tag-manager and WordPress instructions share the same public loader. Pages, clicks, forms, navigation, errors, network requests, resource timing and Web Vitals are discovered after consent. The event library supports search and creating a funnel from an existing event. Custom business outcomes such as purchase completion still require a named event; the product does not claim it can infer every business event automatically.
 

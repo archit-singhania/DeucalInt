@@ -74,5 +74,6 @@ test('command palette, dark theme, comparison, and multi-rule segments', async (
   expect((await segmentResponse).status()).toBe(200);
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.getByText('Traffic & engagement')).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: 'test-results/overview-dark.png', fullPage: true });
 });

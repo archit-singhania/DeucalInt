@@ -66,6 +66,7 @@
   <a class="skip-link" href="#main-content" (click)="$event.preventDefault(); skipToContent()"
     >Skip to content</a
   >
+  <div class="ambient-canvas" aria-hidden="true"><i></i><i></i><i></i></div>
   <aside class="sidebar">
     <a class="brand" href="#overview"
       ><span class="logo-mark">D</span>DeucalInt<span class="beta">BETA</span></a
@@ -122,9 +123,13 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="breadcrumb">
-        Workspace <span>/</span><b>{{ title }}</b>
+        <span class="workspace-orb" aria-hidden="true"></span><b>{{ projectName }}</b
+        ><span class="breadcrumb-context"> / {{ title }}</span>
       </div>
       <div class="top-actions">
+        <button class="connect-action global-connect" (click)="navigate('onboarding')">
+          <di-icon name="settings" /><span>Connect your site</span>
+        </button>
         <button class="command-trigger" (click)="openCommand()">
           <di-icon name="search" /> Search workspace <kbd>Ctrl K</kbd></button
         ><button class="icon-button" aria-label="Toggle color theme" (click)="toggleTheme()">
@@ -135,7 +140,7 @@
           aria-label="Open project settings"
           (click)="navigate('settings')"
         >
-          ⚙</button
+          <di-icon name="settings" /></button
         ><span class="avatar small">DI</span>
       </div>
     </header>
@@ -157,10 +162,12 @@
           <p>{{ subtitle }}</p>
         </div>
         <div class="heading-actions">
-          <button class="connect-action" (click)="navigate('onboarding')">
-            <di-icon name="settings" /><span>Connect your site</span></button
-          ><button (click)="export()"><di-icon name="download" /> <span>Export</span></button
-          ><button class="primary" (click)="investigateNow()">✧ Ask DeucalInt</button>
+          <span class="workspace-health"
+            ><i class="tiny-dot" [class.off]="!connected"></i
+            >{{ connected ? 'Workspace live' : 'Connecting' }}</span
+          ><button class="primary ask-button" (click)="investigateNow()">
+            <di-icon name="investigate" /> Ask DeucalInt
+          </button>
         </div>
       </div>
       <div class="filterbar">
@@ -199,12 +206,13 @@
             </select></label
           >
         </div>
-        <span class="fresh"
+        <button class="toolbar-export" (click)="export()">
+          <di-icon name="download" /><span>Export</span></button
+        ><span class="fresh"
           ><i class="tiny-dot"></i>{{ data?.sample ? 'Sample + captured data' : 'Captured data'
           }}<button class="icon-button" aria-label="Refresh data" (click)="refresh()">
-            ↻
-          </button></span
-        >
+            <di-icon name="refresh" /></button
+        ></span>
       </div>
       <div class="segment-chips">
         <button (click)="openSegments()"><di-icon name="filter" /> Build segment</button>
@@ -251,9 +259,14 @@
         </div>
       }
       @if (loading) {
-        <div class="loading">
-          <div></div>
-          <span>Connecting the dots…</span>
+        <div class="glass-skeleton" role="status" aria-label="Loading workspace">
+          <span class="sr-only">Loading workspace…</span>
+          <div class="skeleton-metrics">
+            @for (item of [1, 2, 3, 4]; track item) {
+              <div><i></i><b></b><i></i></div>
+            }
+          </div>
+          <div class="skeleton-chart"></div>
         </div>
       }
       @if (!loading && data) {
@@ -630,33 +643,19 @@
             ><span>{{ number(data.metrics.errors) }} captured errors</span
             ><span>{{ data.updatedAt | date: 'shortTime' : 'UTC' }} UTC data refresh</span>
           </div>
-          <section class="insight-banner">
-            <span class="insight-icon">✧</span>
-            <div>
-              <div class="insight-label">
-                YOUR NEXT QUESTION, ANSWERED.<span class="purple-tag">Evidence engine</span>
-              </div>
-              <h3>{{ overviewHeadline }}</h3>
-              <p>
-                Connect behavior, errors, and releases to understand what changed in the last
-                {{ days }} days.
-              </p>
-            </div>
-            <button (click)="investigateNow()">Investigate changes <span>↗</span></button>
-          </section>
           <section class="stats-grid">
             @for (
               card of [
-                ['visitors', 'Unique visitors', 'People, not page loads', '◉'],
-                ['sessions', 'Total sessions', 'Every journey starts here', '◫'],
-                ['conversion', 'Conversion rate', 'Sessions that purchased', '↗'],
-                ['errors', 'JavaScript errors', 'Signals worth investigating', '⌁'],
+                ['visitors', 'Unique visitors', 'People, not page loads', 'users'],
+                ['sessions', 'Total sessions', 'Every journey starts here', 'sessions'],
+                ['conversion', 'Conversion rate', 'Sessions that purchased', 'arrow'],
+                ['errors', 'JavaScript errors', 'Signals worth investigating', 'observability'],
               ];
               track card[0]
             ) {
               <article class="stat-card">
                 <div class="stat-title">
-                  {{ card[1] }}<span>{{ card[3] }}</span>
+                  {{ card[1] }}<span><di-icon [name]="card[3]" /></span>
                 </div>
                 <div class="stat-number">
                   {{ number(data.metrics[card[0]]) }}{{ card[0] === 'conversion' ? '%' : ''
@@ -679,6 +678,20 @@
                 </div>
               </article>
             }
+          </section>
+          <section class="insight-banner">
+            <span class="insight-icon"><di-icon name="investigate" /></span>
+            <div>
+              <div class="insight-label">
+                YOUR NEXT QUESTION, ANSWERED.<span class="purple-tag">Evidence engine</span>
+              </div>
+              <h3>{{ overviewHeadline }}</h3>
+              <p>
+                Connect behavior, errors, and releases to understand what changed in the last
+                {{ days }} days.
+              </p>
+            </div>
+            <button (click)="investigateNow()">Investigate changes <span>↗</span></button>
           </section>
           <div class="overview-grid">
             <section class="panel traffic-panel">
@@ -716,8 +729,8 @@
                 >
                   <defs>
                     <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stop-color="#167d78" stop-opacity="0.18" />
-                      <stop offset="100%" stop-color="#167d78" stop-opacity="0" />
+                      <stop offset="0%" stop-color="#518bfa" stop-opacity="0.18" />
+                      <stop offset="100%" stop-color="#518bfa" stop-opacity="0" />
                     </linearGradient>
                   </defs>
                   @for (y of [20, 65, 110, 155, 200]; track y) {
@@ -753,14 +766,14 @@
                   <path
                     [attr.d]="line('pageviews', true)"
                     fill="none"
-                    stroke="#a2b4e7"
+                    stroke="#a58ae5"
                     stroke-width="2.5"
                     stroke-dasharray="5 4"
                   />
                   <path
                     [attr.d]="line('sessions', true)"
                     fill="none"
-                    stroke="#147d78"
+                    stroke="#518bfa"
                     stroke-width="3"
                     stroke-linejoin="round"
                   />
@@ -870,7 +883,7 @@
                     <button (click)="browser = p.name; filter()">
                       <i
                         [style.background]="
-                          ['#147d78', '#b1a3f5', '#a2b4e7', '#dce1ef'][$index % 4]
+                          ['#518bfa', '#a58ae5', '#70b8b6', '#dce1ef'][$index % 4]
                         "
                       ></i
                       ><span>{{ p.name }}</span
@@ -1171,7 +1184,7 @@
                             [style.background]="
                               v === null
                                 ? 'var(--canvas)'
-                                : 'color-mix(in srgb, #147d78 ' +
+                                : 'color-mix(in srgb, #3676e7 ' +
                                   (8 + v * 0.85) +
                                   '%, var(--surface))'
                             "

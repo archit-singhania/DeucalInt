@@ -817,7 +817,7 @@ export class AppComponent implements OnInit, OnDestroy {
           const start = (sum / total) * 100;
           sum += r.count;
           return (
-            ['#147d78', '#8cb8aa', '#a2b4e7', '#dce1ef'][i % 4] +
+            ['#518bfa', '#a58ae5', '#64bbc6', '#dce1ef'][i % 4] +
             ' ' +
             start +
             '% ' +

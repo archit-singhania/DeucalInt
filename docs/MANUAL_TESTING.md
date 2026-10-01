@@ -8,6 +8,8 @@ Choose Owner, leave the prefilled `deucalint-local` password, and enter the work
 
 ## 2. Overview and filters
 
+Check the new glass design in both themes using the moon/sun control. At desktop width, navigation should float on the left, metrics should appear before the insight prompt, and export/refresh should sit beside the filters. At 390px width, navigation becomes a horizontal dock and cards stack without horizontal page overflow. Try keyboard Tab navigation, open/close search with Ctrl+K/Escape, and enable your operating system's reduced-motion preference; entrances and transitions should stop. Use Connect your site in the top bar to check installation styling.
+
 1. Switch between 24 hours, 7 days, and 30 days. Totals and trend points should change.
 2. Choose Safari, then Chrome. Metrics, top pages, investigations and subsequent pages should use the chosen browser filter.
 3. Choose **Empty sandbox**. Before any testing it should show zero totals and helpful empty states.

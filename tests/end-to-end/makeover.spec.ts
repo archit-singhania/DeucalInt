@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
   expect((await overview).status()).toBe(200);
   await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
   await expect(page.locator('.sidebar')).toHaveCSS('position', 'fixed');
-  await expect(page.locator('.sidebar')).toHaveCSS('width', '228px');
+  await expect(page.locator('.sidebar')).toHaveCSS('width', '218px');
   await expect.poll(() => page.locator('di-geography svg path').count()).toBeGreaterThan(100);
 });
 
@@ -167,3 +167,4 @@ test('rolling retention exposes denominators and journey anchors query the serve
   expect(graph.direction).toBe('backward');
   expect(graph.nodes.length).toBeGreaterThan(0);
 });
+
