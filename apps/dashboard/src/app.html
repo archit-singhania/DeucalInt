@@ -67,7 +67,19 @@
     >Skip to content</a
   >
   <div class="ambient-canvas" aria-hidden="true"><i></i><i></i><i></i></div>
-  <aside class="sidebar">
+  <aside
+    class="sidebar"
+    [attr.role]="navigationOpen ? 'dialog' : null"
+    [attr.aria-modal]="navigationOpen ? 'true' : null"
+    [attr.aria-label]="navigationOpen ? 'All workspace pages' : null"
+  >
+    <button
+      class="rail-toggle"
+      [attr.aria-label]="railCollapsed ? 'Expand navigation' : 'Collapse navigation'"
+      (click)="railCollapsed = !railCollapsed"
+    >
+      <di-icon name="overview" />
+    </button>
     <a class="brand" href="#overview"
       ><span class="logo-mark">D</span>DeucalInt<span class="beta">BETA</span></a
     >
@@ -85,6 +97,7 @@
           @for (item of group.items; track item[0]) {
             <a
               [href]="'#' + item[0]"
+              [attr.aria-label]="item[1]"
               [class.active]="view === item[0]"
               [attr.aria-current]="view === item[0] ? 'page' : null"
               (click)="navigate(item[0])"
@@ -93,7 +106,7 @@
                   [name]="
                     item[0] === 'team' ? 'users' : item[0] === 'events' ? 'live' : item[0]
                   " /></span
-              >{{ item[1] }}
+              ><span class="nav-text">{{ item[1] }}</span>
               @if (item[0] === 'live') {
                 <i class="tiny-dot"></i>
               }
@@ -120,6 +133,40 @@
       </button>
     </div>
   </aside>
+  @if (navigationOpen) {
+    <button
+      class="navigation-scrim"
+      aria-label="Close page menu"
+      (click)="navigationOpen = false"
+    ></button>
+  }
+  <nav class="liquid-dock" aria-label="Quick page navigation" (focusin)="dockCompact = false">
+    <button
+      class="dock-menu"
+      aria-label="All pages"
+      [attr.aria-expanded]="navigationOpen"
+      (click)="togglePageMenu()"
+    >
+      <di-icon name="overview" /><span>Pages</span>
+    </button>
+    <div class="dock-destinations">
+      @for (item of dockPages; track item[0]) {
+        <button
+          [class.selected]="view === item[0]"
+          [attr.aria-current]="view === item[0] ? 'page' : null"
+          [attr.aria-label]="'Go to ' + item[1]"
+          (click)="navigate(item[0])"
+        >
+          <di-icon
+            [name]="item[0] === 'team' ? 'users' : item[0] === 'events' ? 'live' : item[0]"
+          /><span>{{ item[1] }}</span>
+        </button>
+      }
+    </div>
+    <button class="dock-search" aria-label="Search from navigation dock" (click)="openCommand()">
+      <di-icon name="search" />
+    </button>
+  </nav>
   <div class="app-shell">
     <header class="topbar">
       <div class="breadcrumb">

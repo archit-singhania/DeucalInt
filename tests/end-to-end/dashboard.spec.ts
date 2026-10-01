@@ -10,7 +10,12 @@ test('overview, segments, investigation, and evidence', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await expect(page.getByText('Traffic & engagement')).toBeVisible();
-  await page.screenshot({ path: 'test-results/overview-desktop.png', fullPage: true });
+  await page.screenshot({
+    path: 'test-results/overview-desktop.png',
+    fullPage: true,
+    animations: 'disabled',
+    style: '* { animation: none !important; transition: none !important; }',
+  });
   await page.getByLabel('Browser segment').selectOption('Safari');
   await expect(page.getByText('Traffic & engagement')).toBeVisible();
   await page.getByRole('button', { name: 'Investigate changes' }).click();
@@ -18,7 +23,12 @@ test('overview, segments, investigation, and evidence', async ({ page }) => {
   await page.getByRole('button').filter({ hasText: 'Conversion comparison' }).click();
   await expect(page.getByRole('dialog', { name: 'Query evidence' })).toBeVisible();
   await page.getByLabel('Close evidence').click();
-  await page.screenshot({ path: 'test-results/investigation-desktop.png', fullPage: true });
+  await page.screenshot({
+    path: 'test-results/investigation-desktop.png',
+    fullPage: true,
+    animations: 'disabled',
+    style: '* { animation: none !important; transition: none !important; }',
+  });
   expect(errors).toEqual([]);
 });
 test('all analytic pages load real API data', async ({ page }) => {
@@ -52,7 +62,12 @@ test('consented demo events enter the live stream', async ({ page }) => {
 test('mobile layout and navigation', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByText('Traffic & engagement')).toBeVisible();
-  await page.screenshot({ path: 'test-results/overview-mobile.png', fullPage: true });
+  await page.screenshot({
+    path: 'test-results/overview-mobile.png',
+    fullPage: true,
+    animations: 'disabled',
+    style: '* { animation: none !important; transition: none !important; }',
+  });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
   expect(overflow).toBe(false);
 });
@@ -75,5 +90,10 @@ test('command palette, dark theme, comparison, and multi-rule segments', async (
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.getByText('Traffic & engagement')).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: 'test-results/overview-dark.png', fullPage: true });
+  await page.screenshot({
+    path: 'test-results/overview-dark.png',
+    fullPage: true,
+    animations: 'disabled',
+    style: '* { animation: none !important; transition: none !important; }',
+  });
 });

@@ -36,7 +36,12 @@ test('one-script onboarding makes consent explicit and verifies a real collectio
   expect(asset.headers()['content-type']).toMatch(/javascript/);
   expect(await asset.text()).toContain('deucalint:ready');
   await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: testInfo.outputPath('onboarding.png'), fullPage: true });
+  await page.screenshot({
+    path: testInfo.outputPath('onboarding.png'),
+    fullPage: true,
+    animations: 'disabled',
+    style: '* { animation: none !important; transition: none !important; }',
+  });
 });
 
 test('event discovery searches real names and creates a funnel without redefining an event', async ({
@@ -77,7 +82,12 @@ test('journey diagram supports keyboard selection and a readable data table', as
   await graph.getByRole('button', { name: 'Clear selection' }).click();
   await expect(graph.getByRole('button', { name: 'Reset focus' })).toBeDisabled();
   await page.evaluate(() => window.scrollTo(0, 0));
-  await page.screenshot({ path: testInfo.outputPath('journey-keyboard.png'), fullPage: true });
+  await page.screenshot({
+    path: testInfo.outputPath('journey-keyboard.png'),
+    fullPage: true,
+    animations: 'disabled',
+    style: '* { animation: none !important; transition: none !important; }',
+  });
 });
 
 test('country selection applies its segment to the server query', async ({ page }) => {
@@ -129,6 +139,7 @@ test('setup and journey views fit a narrow screen with reduced motion', async ({
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   for (const destination of ['Connect a source', 'Auto-captured events', 'Journeys']) {
+    await page.getByRole('button', { name: 'All pages', exact: true }).click();
     await page.getByRole('link', { name: destination, exact: true }).click();
     await expect(page.getByRole('heading', { name: destination, exact: true })).toBeVisible();
     await expect(page.getByRole('alert')).toHaveCount(0);
@@ -138,8 +149,64 @@ test('setup and journey views fit a narrow screen with reduced motion', async ({
     await page.screenshot({
       path: testInfo.outputPath(`${destination.replaceAll(' ', '-')}-mobile.png`),
       fullPage: true,
+      animations: 'disabled',
+      style: '* { animation: none !important; transition: none !important; }',
     });
   }
+});
+
+test('route palettes, compact rail, and floating mobile page menu', async ({ page }, testInfo) => {
+  await page.getByRole('button', { name: 'Collapse navigation', exact: true }).click();
+  await expect(page.locator('.sidebar')).toHaveCSS('width', '78px');
+  await page.getByRole('link', { name: 'Funnels', exact: true }).click();
+  await expect(page.locator('di-root')).toHaveAttribute('data-view', 'funnels');
+  await expect(page.getByRole('button', { name: 'Go to Funnels', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.getByRole('button', { name: 'Expand navigation', exact: true }).click();
+  const palettes = new Set<string>();
+  const routes = await page.locator('.sidebar nav a').evaluateAll((links) =>
+    links.map((link) => ({
+      label: link.getAttribute('aria-label')!,
+      route: link.getAttribute('href')!.slice(1),
+    })),
+  );
+  for (const item of routes) {
+    const loaded = page.waitForResponse((response) => response.url().includes('/api/reports?'));
+    await page.getByRole('link', { name: item.label, exact: true }).click();
+    expect((await loaded).status()).toBe(200);
+    await expect(page.locator('.glass-skeleton')).toHaveCount(0);
+    await expect(page.locator('di-root')).toHaveAttribute('data-view', item.route);
+    await expect(page.locator('#main-content h1')).toContainText(item.label);
+    palettes.add(
+      await page
+        .locator('di-root')
+        .evaluate((root) => getComputedStyle(root).getPropertyValue('--route').trim()),
+    );
+    if (['investigate', 'funnels', 'settings', 'team'].includes(item.route)) {
+      await expect(page.locator('.glass-skeleton')).toHaveCount(0);
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({
+        path: testInfo.outputPath(`${item.route}.png`),
+        fullPage: true,
+        animations: 'disabled',
+        style: '* { animation: none !important; transition: none !important; }',
+      });
+    }
+  }
+  expect(palettes.size).toBe(routes.length);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'All pages', exact: true }).click();
+  await expect(page.locator('.sidebar')).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'All workspace pages' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'All pages', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'All pages', exact: true }).click();
+  await page.getByRole('link', { name: 'Overview', exact: true }).click();
+  await expect(page.locator('.sidebar')).toBeHidden();
+  await page.getByRole('button', { name: 'Go to Live activity', exact: true }).click();
+  await expect(page.locator('di-root')).toHaveAttribute('data-view', 'live');
 });
 
 test('rolling retention exposes denominators and journey anchors query the server', async ({
@@ -167,4 +234,3 @@ test('rolling retention exposes denominators and journey anchors query the serve
   expect(graph.direction).toBe('backward');
   expect(graph.nodes.length).toBeGreaterThan(0);
 });
-

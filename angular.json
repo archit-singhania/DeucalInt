@@ -24,7 +24,8 @@
               "apps/dashboard/src/styles.css",
               "apps/dashboard/src/premium.css",
               "apps/dashboard/src/studio.css",
-              "apps/dashboard/src/glass.css"
+              "apps/dashboard/src/glass.css",
+              "apps/dashboard/src/liquid.css"
             ],
             "assets": [
               {

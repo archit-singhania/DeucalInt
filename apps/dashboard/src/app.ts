@@ -17,8 +17,39 @@ import { JourneyFlowComponent } from './journey-flow';
   standalone: true,
   imports: [CommonModule, IconComponent, GeographyComponent, JourneyFlowComponent],
   templateUrl: './app.html',
+  host: {
+    '[attr.data-view]': 'view',
+    '[class.navigation-open]': 'navigationOpen',
+    '[class.rail-collapsed]': 'railCollapsed',
+    '[class.dock-compact]': 'dockCompact',
+  },
 })
 export class AppComponent implements OnInit, OnDestroy {
+  navigationOpen = false;
+  railCollapsed = false;
+  dockCompact = false;
+  private lastScroll = 0;
+  togglePageMenu() {
+    this.navigationOpen = !this.navigationOpen;
+    this.dockCompact = false;
+    if (this.navigationOpen) {
+      setTimeout(() => document.querySelector<HTMLElement>('.sidebar nav a')?.focus(), 0);
+    } else {
+      document.querySelector<HTMLElement>('.dock-menu')?.focus();
+    }
+  }
+  @HostListener('window:scroll')
+  onWorkspaceScroll() {
+    const position = window.scrollY;
+    this.dockCompact = position > 140 && position > this.lastScroll;
+    this.lastScroll = position;
+  }
+  get dockPages() {
+    return (
+      this.nav.find((group) => group.items.some((item) => item[0] === this.view))?.items ||
+      this.nav[0].items
+    );
+  }
   private cdr = inject(ChangeDetectorRef);
   private hashChanged = () => {
     const next = location.hash.slice(1) || 'overview';
@@ -318,12 +349,19 @@ export class AppComponent implements OnInit, OnDestroy {
       return;
     }
     if (event.key === 'Escape') {
+      if (this.navigationOpen) {
+        event.preventDefault();
+        this.togglePageMenu();
+        return;
+      }
       this.closeDialogs();
       this.showSegments = false;
       return;
     }
     if (event.key === 'Tab') {
-      const modals = Array.from(document.querySelectorAll<HTMLElement>('.modal[role="dialog"]'));
+      const modals = Array.from(
+        document.querySelectorAll<HTMLElement>('.modal[role="dialog"],.sidebar[role="dialog"]'),
+      );
       const modal = modals.at(-1);
       if (!modal) return;
       const items = Array.from(
@@ -630,6 +668,8 @@ export class AppComponent implements OnInit, OnDestroy {
     this.loggedIn = false;
   }
   navigate(view: string) {
+    this.navigationOpen = false;
+    this.dockCompact = false;
     if (this.view === view) return;
     if (view !== 'demo') this.stopDemoCapture();
     this.view = view;
